@@ -1,0 +1,15 @@
+{
+  "name": "poke-edge",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n web,api -c cyan,magenta \"npm run dev -w web\" \"npm run dev -w server\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "npm run start -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
