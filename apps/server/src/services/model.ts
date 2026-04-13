@@ -1,10 +1,102 @@
 import type Database from 'better-sqlite3'
 import { getPullCostRaw, seedPullRates } from './pullRates.js'
-import { normalizeRarityTier } from './pokemontcg.js'
+import { normalizeRarityTier, reparseCharacterNames } from './pokemontcg.js'
 import { seedArtworkScoresFromRules } from './artworkEngine.js'
+import { computeFutureValue } from './investment.js'
 
 const PULL_MULT = 1.19
 const DES_MULT = 1.41
+
+/**
+ * Raw fair estimate = base × 1.19^pull × 1.41^des can explode vs real singles prices.
+ * We shrink toward the **median market price of the same set + rarity tier** (peers) and
+ * cap vs peer/median and listing so flags stay interpretable. This is still a heuristic, not a comp engine.
+ */
+function medianSorted(values: number[]): number {
+  if (values.length === 0) return 0
+  const s = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2
+}
+
+/** Median listing price per `set_id|||normalizeRarityTier(rarity)` among cards with market > 0. */
+function buildPeerMedianByTier(db: Database.Database): Map<string, number> {
+  const rows = db
+    .prepare(
+      `SELECT set_id, rarity, market_price FROM cards
+       WHERE market_price IS NOT NULL AND market_price > 0 AND set_id IS NOT NULL AND rarity IS NOT NULL`,
+    )
+    .all() as { set_id: string; rarity: string; market_price: number }[]
+
+  const groups = new Map<string, number[]>()
+  for (const r of rows) {
+    const key = `${r.set_id}|||${normalizeRarityTier(r.rarity)}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(r.market_price)
+  }
+  const medians = new Map<string, number>()
+  for (const [k, arr] of groups) {
+    medians.set(k, medianSorted(arr))
+  }
+  return medians
+}
+
+function tierKey(setId: string | null, rarity: string | null): string | null {
+  if (!setId || !rarity) return null
+  return `${setId}|||${normalizeRarityTier(rarity)}`
+}
+
+/**
+ * Blend raw model estimate toward peer tier median AND market price using
+ * adaptive anchoring: the higher the market price, the more we defer to it
+ * because the raw model (base × mult^score) structurally can't reach
+ * expensive-card territory.
+ */
+export function shrinkPredictedToPeers(
+  raw: number,
+  key: string | null,
+  peerMedians: Map<string, number>,
+  market: number | null,
+): { predicted: number; peerMedian: number | null } {
+  const peer = key != null ? peerMedians.get(key) ?? null : null
+  const mkt = market != null && market > 0 ? market : null
+
+  let p = raw
+
+  if (mkt != null) {
+    const lr = Math.log(Math.max(raw, 0.01))
+    const lm = Math.log(Math.max(mkt, 0.01))
+
+    // Adaptive trust: cheap cards use more model, expensive cards defer to market.
+    // mkt=$1 → trust 0.50, mkt=$10 → 0.62, mkt=$100 → 0.74, mkt=$500+ → 0.85
+    const mktTrust = Math.min(0.85, 0.50 + Math.log10(Math.max(mkt, 1)) * 0.12)
+
+    if (peer != null && peer > 0) {
+      const lp = Math.log(Math.max(peer, 0.01))
+      const rest = 1 - mktTrust
+      p = Math.exp(lr * (rest * 0.35) + lp * (rest * 0.65) + lm * mktTrust)
+    } else {
+      p = Math.exp(lr * (1 - mktTrust) + lm * mktTrust)
+    }
+  } else if (peer != null && peer > 0) {
+    const lr = Math.log(Math.max(raw, 0.01))
+    const lp = Math.log(Math.max(peer, 0.01))
+    p = Math.exp(lr * 0.3 + lp * 0.7)
+  }
+
+  // Floor: if market exists and prediction is still unreasonably low,
+  // the model lacks coverage for this tier — blend harder toward market
+  if (mkt != null && p < mkt * 0.4) {
+    p = Math.exp(Math.log(Math.max(p, 0.01)) * 0.2 + Math.log(mkt) * 0.8)
+  }
+
+  const capFromPeer = peer != null ? peer * 3.5 : 0
+  const capFromMkt = mkt != null ? mkt * 1.8 : 0
+  const cap = Math.max(15, capFromPeer, capFromMkt, (peer ?? mkt ?? 12) * 2.5)
+  p = Math.min(p, cap)
+
+  return { predicted: Math.max(p, 0.01), peerMedian: peer }
+}
 
 function minMaxNormalize(values: number[], x: number): number {
   const min = Math.min(...values)
@@ -125,8 +217,38 @@ export function mergeTrendsDefaults(db: Database.Database) {
   ).run()
 }
 
+/** Small spread within same set/rarity tier by market rank (reduces identical Pull+Des pairs). */
+function computeTierSlotDesirabilityBump(db: Database.Database): Map<string, number> {
+  const rows = db
+    .prepare(
+      `SELECT id, set_id, rarity, market_price FROM cards
+       WHERE set_id IS NOT NULL AND rarity IS NOT NULL AND market_price IS NOT NULL AND market_price > 0`,
+    )
+    .all() as { id: string; set_id: string; rarity: string; market_price: number }[]
+
+  const groups = new Map<string, typeof rows>()
+  for (const r of rows) {
+    const key = `${r.set_id}|||${normalizeRarityTier(r.rarity)}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(r)
+  }
+  const bump = new Map<string, number>()
+  for (const [, group] of groups) {
+    group.sort((a, b) => b.market_price - a.market_price)
+    const n = group.length
+    for (let i = 0; i < n; i++) {
+      const rank = i + 1
+      const norm = n <= 1 ? 0.5 : (n - rank) / (n - 1)
+      bump.set(group[i].id, norm * 0.15)
+    }
+  }
+  return bump
+}
+
 export function computeDesirabilityAndPrices(db: Database.Database) {
   mergeTrendsDefaults(db)
+
+  const tierBump = computeTierSlotDesirabilityBump(db)
 
   const rows = db
     .prepare(
@@ -154,7 +276,8 @@ export function computeDesirabilityAndPrices(db: Database.Database) {
     const charP = r.premium_score ?? 5
     const art = r.artwork_hype_score ?? 5
     const tr = r.google_trends_score ?? 5
-    const des = charP * 0.45 + art * 0.45 + tr * 0.1
+    const slot = tierBump.get(r.id) ?? 0
+    const des = Math.min(10, charP * 0.45 + art * 0.45 + tr * 0.1 + slot)
     updDes.run(charP, des, tr, r.id)
 
     const market = r.market_price
@@ -193,29 +316,91 @@ export function computeDesirabilityAndPrices(db: Database.Database) {
     | undefined
   const basePrice = baseRow?.base_price ?? (calibratedBase || 1)
 
-  const cardsAll = db.prepare(`SELECT id, market_price, pull_cost_score, desirability_score FROM cards`).all() as {
+  const peerMedians = buildPeerMedianByTier(db)
+
+  const cardsAll = db.prepare(
+    `SELECT c.id, c.name, c.set_id, c.rarity, c.market_price, c.pull_cost_score,
+            c.desirability_score, c.reddit_buzz_score, c.trends_score,
+            s.release_date AS set_release_date
+     FROM cards c
+     LEFT JOIN sets s ON s.id = c.set_id`,
+  ).all() as {
     id: string
+    name: string
+    set_id: string | null
+    rarity: string | null
     market_price: number | null
     pull_cost_score: number | null
     desirability_score: number | null
+    reddit_buzz_score: number | null
+    trends_score: number | null
+    set_release_date: string | null
   }[]
 
+  // Compute 30d price trends for future value estimation
+  const trendMap = new Map<string, number>()
+  const cutoff30d = new Date(Date.now() - 31 * 86_400_000).toISOString()
+  const histRows = db.prepare(
+    `SELECT card_id, tcgplayer_market, timestamp FROM price_history
+     WHERE tcgplayer_market IS NOT NULL AND timestamp >= ?
+     ORDER BY card_id, timestamp DESC`,
+  ).all(cutoff30d) as { card_id: string; tcgplayer_market: number; timestamp: string }[]
+  {
+    const byCard = new Map<string, number[]>()
+    for (const h of histRows) {
+      const arr = byCard.get(h.card_id) ?? []
+      if (arr.length < 30) arr.push(h.tcgplayer_market)
+      byCard.set(h.card_id, arr)
+    }
+    for (const [id, prices] of byCard) {
+      if (prices.length >= 2) {
+        const latest = prices[0]
+        const oldest = prices[prices.length - 1]
+        if (oldest > 0) trendMap.set(id, (latest - oldest) / oldest)
+      }
+    }
+  }
+
   const upd = db.prepare(
-    `UPDATE cards SET predicted_price = ?, valuation_flag = ?, explain_json = ?, undervalued_since = ?
+    `UPDATE cards SET predicted_price = ?, valuation_flag = ?, explain_json = ?,
+            undervalued_since = ?, future_value_12m = ?, annual_growth_rate = ?
      WHERE id = ?`,
   )
 
   for (const c of cardsAll) {
     const ps = c.pull_cost_score ?? 5
     const des = c.desirability_score ?? 5
-    const predicted = basePrice * PULL_MULT ** ps * DES_MULT ** des
+    const rawPredicted = basePrice * PULL_MULT ** ps * DES_MULT ** des
     const market = c.market_price
-    let flag = '🟡 FAIRLY VALUED'
+    const tk = tierKey(c.set_id, c.rarity)
+    const { predicted, peerMedian } = shrinkPredictedToPeers(rawPredicted, tk, peerMedians, market)
+
+    // Future value projection
+    const { futureValue12m, annualGrowthRate } = computeFutureValue({
+      name: c.name,
+      rarity: c.rarity,
+      market_price: market,
+      desirability_score: c.desirability_score,
+      google_trends_score: c.trends_score,
+      reddit_buzz_score: c.reddit_buzz_score,
+      set_release_date: c.set_release_date,
+      price_trend_30d: trendMap.get(c.id) ?? null,
+    })
+
+    let flag = '\u{1F7E1} FAIRLY VALUED'
     let ratio = 1
     if (market != null && market > 0 && predicted > 0) {
       ratio = market / predicted
-      if (ratio > 1.25) flag = '🔴 OVERVALUED'
-      else if (ratio < 0.8) flag = '🟢 UNDERVALUED — BUY SIGNAL'
+      if (ratio > 1.25) {
+        // Card is overvalued on fundamentals, but check if future growth justifies the premium
+        if (futureValue12m > 0 && futureValue12m > market * 1.12 && annualGrowthRate >= 0.10) {
+          flag = '\u{1F7E0} GROWTH BUY'
+        } else {
+          flag = '\u{1F534} OVERVALUED'
+        }
+      } else if (ratio < 0.8) {
+        flag = '\u{1F7E2} UNDERVALUED \u2014 BUY SIGNAL'
+      }
     }
 
     const prev = db.prepare(`SELECT valuation_flag, undervalued_since FROM cards WHERE id = ?`).get(c.id) as
@@ -231,16 +416,24 @@ export function computeDesirabilityAndPrices(db: Database.Database) {
     const explain = {
       pullCostScore: ps,
       desirabilityScore: des,
+      tierSlotBump: tierBump.get(c.id) ?? 0,
       basePrice,
+      rawPredicted,
+      peerTierMedian: peerMedian,
+      market: market ?? null,
       predicted,
       ratio,
+      futureValue12m,
+      annualGrowthRate,
       multipliers: { pull: PULL_MULT, desirability: DES_MULT },
     }
-    upd.run(predicted, flag, JSON.stringify(explain), undervaluedSince, c.id)
+    upd.run(predicted, flag, JSON.stringify(explain), undervaluedSince,
+      futureValue12m || null, annualGrowthRate || null, c.id)
   }
 }
 
 export function runFullModel(db: Database.Database) {
+  reparseCharacterNames(db)
   seedPullRates(db)
   computeRanksAndCharacterPremiums(db)
   computePullCosts(db)

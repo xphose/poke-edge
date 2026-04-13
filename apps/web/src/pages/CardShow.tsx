@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { HelpButton } from '@/components/help-center'
 
 export function CardShowPage() {
   const download = async () => {
@@ -25,10 +26,12 @@ export function CardShowPage() {
 
   return (
     <div className="max-w-xl space-y-4">
-      <p className="text-muted-foreground">
-        Export a print-friendly single page with top undervalued chase cards, negotiation bands, QR back to the live
-        dashboard, and the last refresh time. Works offline after download.
-      </p>
+      <div className="flex items-start gap-1">
+        <p className="text-muted-foreground">
+          Export a print-friendly single page for offline floor usage.
+        </p>
+        <HelpButton sectionId="card-show-overview" className="mt-[-2px]" />
+      </div>
       <div className="flex flex-wrap gap-2">
         <Button type="button" onClick={download}>
           Download HTML

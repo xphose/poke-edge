@@ -1,0 +1,34 @@
+import Database from 'better-sqlite3'
+import { runMigrations } from '../db/migrate.js'
+
+export function openMemoryDb(): Database.Database {
+  const db = new Database(':memory:')
+  db.pragma('journal_mode = MEMORY')
+  runMigrations(db)
+  return db
+}
+
+export function seedMinimalCard(db: Database.Database) {
+  db.prepare(
+    `INSERT INTO sets (id, name, release_date, total_cards, last_updated) VALUES (?, ?, ?, ?, datetime('now'))`,
+  ).run('test-set', 'Test Set', '2024-01-01', 1)
+  db.prepare(
+    `INSERT INTO cards (
+      id, name, set_id, rarity, image_url, character_name, card_type,
+      market_price, pull_cost_score, desirability_score, predicted_price, valuation_flag, last_updated
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+  ).run(
+    'test-card-1',
+    'Pikachu',
+    'test-set',
+    'Ultra Rare',
+    'https://example.com/card.png',
+    'Pikachu',
+    'Ultra Rare',
+    10,
+    5,
+    6,
+    12,
+    '🟡 FAIRLY VALUED',
+  )
+}

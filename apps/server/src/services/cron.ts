@@ -8,6 +8,8 @@ import { refreshEbayMediansForCards } from './ebay.js'
 import { recordPriceSnapshot } from './priceHistory.js'
 import { refreshSetMetrics } from './setMetrics.js'
 import { notifyPriceAlerts } from './push.js'
+import { refreshSealedPrices, seedSealedPrices } from './sealedPrices.js'
+import { takePredictionSnapshot } from './trackRecord.js'
 
 let refreshing = false
 
@@ -24,19 +26,27 @@ export function startCronJobs(db: Database.Database) {
     }
   }
 
+  seedSealedPrices(db)
+
   cron.schedule('0 */4 * * *', safe('prices', () => fullRefresh(db)))
   cron.schedule('0 */6 * * *', safe('ebay', () => refreshEbayMediansForCards(db)))
+  cron.schedule('30 * * * *', safe('snapshot', () => recordPriceSnapshot(db)))
   cron.schedule('*/30 * * * *', safe('reddit', async () => {
     await pollRedditOptimized(db)
   }))
   cron.schedule('0 3 * * *', safe('trends', () => refreshTrendsForAllCharacters(db)))
   cron.schedule('0 4 * * 0', safe('regression', () => runFullModel(db)))
+  cron.schedule('0 0 * * *', safe('prediction-snapshot', () => takePredictionSnapshot(db)))
   cron.schedule('*/15 * * * *', safe('alerts', () => notifyPriceAlerts(db)))
+  cron.schedule('0 */12 * * *', safe('sealed', async () => { await refreshSealedPrices(db) }))
 }
 
 export async function fullRefresh(db: Database.Database) {
+  seedSealedPrices(db)
   await ingestPokemonTcg(db)
   runFullModel(db)
   recordPriceSnapshot(db)
+  takePredictionSnapshot(db)
+  await refreshSealedPrices(db).catch(() => {})
   refreshSetMetrics(db)
 }

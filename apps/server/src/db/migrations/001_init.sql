@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS cards (
   trends_score REAL,
   explain_json TEXT,
   undervalued_since TEXT,
+  future_value_12m REAL,
+  annual_growth_rate REAL,
   last_updated TEXT,
   FOREIGN KEY (set_id) REFERENCES sets(id)
 );

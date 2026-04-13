@@ -51,16 +51,33 @@ export async function fetchEbayMedianPrice(query: string): Promise<number | null
   return prices.length % 2 ? prices[mid] : (prices[mid - 1] + prices[mid]) / 2
 }
 
+function extractNumber(cardId: string): string {
+  const idx = cardId.lastIndexOf('-')
+  return idx >= 0 ? cardId.slice(idx + 1) : cardId
+}
+
+export function buildEbayCardQuery(name: string, cardId: string, setName: string | null): string {
+  const num = extractNumber(cardId)
+  const parts = [name, num]
+  if (setName) parts.push(setName)
+  parts.push('pokemon card')
+  return parts.join(' ')
+}
+
 export async function refreshEbayMediansForCards(db: Database.Database, limit = 80) {
   const rows = db
     .prepare(
-      `SELECT id, name, market_price FROM cards WHERE market_price IS NOT NULL ORDER BY market_price DESC LIMIT ?`,
+      `SELECT c.id, c.name, c.market_price, s.name AS set_name
+       FROM cards c
+       LEFT JOIN sets s ON c.set_id = s.id
+       WHERE c.market_price IS NOT NULL
+       ORDER BY c.market_price DESC LIMIT ?`,
     )
-    .all(limit) as { id: string; name: string; market_price: number }[]
+    .all(limit) as { id: string; name: string; market_price: number; set_name: string | null }[]
 
   const stmt = db.prepare(`UPDATE cards SET ebay_median = ? WHERE id = ?`)
   for (const r of rows) {
-    const q = `${r.name} pokemon card PSA`
+    const q = buildEbayCardQuery(r.name, r.id, r.set_name)
     const med = await fetchEbayMedianPrice(q)
     if (med != null) stmt.run(med, r.id)
     await new Promise((res) => setTimeout(res, 400))

@@ -1,10 +1,42 @@
 import type Database from 'better-sqlite3'
 import { fetchWithRetry } from '../util/http.js'
 
-const SUBS = ['PokemonTCG', 'PokemonTCGTrades', 'pkmntcgcollections']
+const SUBS = [
+  'PokemonTCG',
+  'PokemonTCGTrades',
+  'pkmntcgcollections',
+  'PokemonCardValue',
+  'pokemoncardcollectors',
+  'PokemonTCGDeals',
+]
+
+/** Extract the character/pokémon name from a full card name like "Umbreon VMAX" → "umbreon" */
+function extractCharacterName(fullName: string): string | null {
+  const cleaned = fullName
+    .replace(/\b(ex|EX|GX|gx|VMAX|VSTAR|V|vmax|vstar)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const first = cleaned.split(/[\s']+/)[0]?.toLowerCase()
+  return first && first.length >= 4 ? first : null
+}
 
 export async function pollRedditAndScoreBuzz(db: Database.Database) {
-  const cards = db.prepare(`SELECT id, name FROM cards`).all() as { id: string; name: string }[]
+  const cards = db.prepare(`SELECT id, name, character_name FROM cards`).all() as {
+    id: string
+    name: string
+    character_name: string | null
+  }[]
+
+  // Build lookup structures for both full names and character names
+  const charToCards = new Map<string, { id: string; name: string }[]>()
+  for (const c of cards) {
+    const charName = c.character_name?.toLowerCase() || extractCharacterName(c.name)
+    if (charName) {
+      const list = charToCards.get(charName) ?? []
+      list.push(c)
+      charToCards.set(charName, list)
+    }
+  }
 
   const mentions = new Map<string, number>()
 
@@ -20,17 +52,28 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
       }
       const children = data.data?.children ?? []
       for (const ch of children) {
-        const title = ch.data?.title ?? ''
-        const body = ch.data?.selftext ?? ''
-        const text = `${title} ${body}`.toLowerCase()
+        const title = (ch.data?.title ?? '').toLowerCase()
+        const body = (ch.data?.selftext ?? '').toLowerCase()
+        const text = `${title} ${body}`
+
+        // Exact full-name match (high confidence)
         for (const c of cards) {
           const needle = c.name.toLowerCase()
           if (needle.length < 4) continue
           if (!text.includes(needle)) continue
-          const titleHit = title.toLowerCase().includes(needle) ? 2 : 0
-          const bodyHit = body.toLowerCase().includes(needle) ? 1 : 0
-          const w = titleHit + (bodyHit || (titleHit ? 0 : 1))
-          mentions.set(c.id, (mentions.get(c.id) ?? 0) + w)
+          const titleHit = title.includes(needle) ? 3 : 0
+          const bodyHit = body.includes(needle) ? 1 : 0
+          mentions.set(c.id, (mentions.get(c.id) ?? 0) + titleHit + bodyHit)
+        }
+
+        // Character-name match (broader coverage, lower weight)
+        for (const [charName, cardList] of charToCards) {
+          if (!text.includes(charName)) continue
+          const inTitle = title.includes(charName)
+          const w = inTitle ? 1.5 : 0.5
+          for (const c of cardList) {
+            mentions.set(c.id, (mentions.get(c.id) ?? 0) + w)
+          }
         }
       }
     } catch {
@@ -38,10 +81,16 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
     }
   }
 
+  // Blend new mentions with existing scores (exponential decay keeps history relevant)
+  const DECAY = 0.7
+  const read = db.prepare(`SELECT reddit_buzz_score FROM cards WHERE id = ?`)
   const upd = db.prepare(`UPDATE cards SET reddit_buzz_score = ? WHERE id = ?`)
   const tx = db.transaction(() => {
-    for (const [id, score] of mentions) {
-      upd.run(score, id)
+    for (const c of cards) {
+      const prev = (read.get(c.id) as { reddit_buzz_score: number | null } | undefined)?.reddit_buzz_score ?? 0
+      const fresh = mentions.get(c.id) ?? 0
+      const blended = prev * DECAY + fresh
+      upd.run(Math.round(blended * 100) / 100, c.id)
     }
   })
   tx()
@@ -49,7 +98,6 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
   return { matched: mentions.size, totalCards: cards.length }
 }
 
-/** Faster mention pass: pre-filter card names by length and tokenize post text */
 export async function pollRedditOptimized(db: Database.Database) {
   return pollRedditAndScoreBuzz(db)
 }

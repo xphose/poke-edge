@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/lib/api'
+import { loadWatchlistForm, saveWatchlistForm } from '@/lib/ui-persist'
+import { HelpButton } from '@/components/help-center'
 
 type WRow = {
   id: number
@@ -22,24 +25,27 @@ type WRow = {
 const LS_KEY = 'pokeedge_watchlist_local'
 
 export function WatchlistPage() {
-  const [rows, setRows] = useState<WRow[]>([])
-  const [cardId, setCardId] = useState('')
-  const [target, setTarget] = useState('')
+  const queryClient = useQueryClient()
+  const [cardId, setCardId] = useState(() => loadWatchlistForm().cardId)
+  const [target, setTarget] = useState(() => loadWatchlistForm().target)
   const [pushReady, setPushReady] = useState(false)
 
-  const load = () => {
-    api<WRow[]>('/api/watchlist').then((r) => {
-      setRows(r)
+  const watchlistQuery = useQuery({
+    queryKey: ['api', 'watchlist'],
+    queryFn: async () => {
+      const r = await api<WRow[]>('/api/watchlist')
       try {
         localStorage.setItem(LS_KEY, JSON.stringify(r))
       } catch {
         /* ignore */
       }
-    })
-  }
+      return r
+    },
+    staleTime: 30_000,
+  })
+  const rows = watchlistQuery.data ?? []
 
   useEffect(() => {
-    load()
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {})
     }
@@ -47,6 +53,10 @@ export function WatchlistPage() {
       .then((k) => setPushReady(!!k.publicKey))
       .catch(() => setPushReady(false))
   }, [])
+
+  useEffect(() => {
+    saveWatchlistForm({ cardId, target })
+  }, [cardId, target])
 
   const add = async () => {
     await api('/api/watchlist', {
@@ -60,12 +70,12 @@ export function WatchlistPage() {
     })
     setCardId('')
     setTarget('')
-    load()
+    await queryClient.invalidateQueries({ queryKey: ['api', 'watchlist'] })
   }
 
   const remove = async (id: number) => {
     await api(`/api/watchlist/${id}`, { method: 'DELETE' })
-    load()
+    await queryClient.invalidateQueries({ queryKey: ['api', 'watchlist'] })
   }
 
   const subscribePush = async () => {
@@ -86,7 +96,10 @@ export function WatchlistPage() {
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-border p-4">
-        <p className="mb-3 text-sm font-medium">Add to watchlist</p>
+        <div className="mb-3 flex items-center gap-1">
+          <p className="text-sm font-medium">Add to watchlist</p>
+          <HelpButton sectionId="watchlist-overview" />
+        </div>
         <div className="flex flex-wrap gap-3">
           <div>
             <Label htmlFor="cid">Card id (PokémonTCG.io)</Label>
@@ -110,15 +123,20 @@ export function WatchlistPage() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">
-        <Table>
+        <Table className="w-max min-w-full">
           <TableHeader>
             <TableRow>
-              <TableHead>Card</TableHead>
-              <TableHead>Qty</TableHead>
-              <TableHead>Purchase</TableHead>
-              <TableHead>Market</TableHead>
-              <TableHead>P&amp;L</TableHead>
-              <TableHead>Target</TableHead>
+              <TableHead>
+                <span className="inline-flex items-center gap-1">
+                  Card
+                  <HelpButton sectionId="watchlist-overview" />
+                </span>
+              </TableHead>
+              <TableHead className="whitespace-nowrap">Qty</TableHead>
+              <TableHead className="whitespace-nowrap">Purchase</TableHead>
+              <TableHead className="whitespace-nowrap">Market</TableHead>
+              <TableHead className="whitespace-nowrap">P&amp;L</TableHead>
+              <TableHead className="whitespace-nowrap">Target</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -130,15 +148,15 @@ export function WatchlistPage() {
                   : null
               return (
                 <TableRow key={w.id}>
-                  <TableCell className="flex items-center gap-2">
+                  <TableCell className="flex items-center gap-2 whitespace-nowrap">
                     {w.image_url && <img src={w.image_url} alt="" className="h-10 w-auto rounded" />}
-                    <span>{w.name ?? w.card_id}</span>
+                    <span className="max-w-[10rem] truncate sm:max-w-none">{w.name ?? w.card_id}</span>
                   </TableCell>
-                  <TableCell>{w.quantity}</TableCell>
-                  <TableCell>{w.purchase_price != null ? `$${w.purchase_price.toFixed(2)}` : '—'}</TableCell>
-                  <TableCell>{w.market_price != null ? `$${w.market_price.toFixed(2)}` : '—'}</TableCell>
-                  <TableCell>{pl != null ? `$${pl.toFixed(2)}` : '—'}</TableCell>
-                  <TableCell>{w.target_buy_price != null ? `$${w.target_buy_price.toFixed(2)}` : '—'}</TableCell>
+                  <TableCell className="tabular-nums">{w.quantity}</TableCell>
+                  <TableCell className="tabular-nums whitespace-nowrap">{w.purchase_price != null ? `$${w.purchase_price.toFixed(2)}` : '—'}</TableCell>
+                  <TableCell className="tabular-nums whitespace-nowrap">{w.market_price != null ? `$${w.market_price.toFixed(2)}` : '—'}</TableCell>
+                  <TableCell className="tabular-nums whitespace-nowrap">{pl != null ? `$${pl.toFixed(2)}` : '—'}</TableCell>
+                  <TableCell className="tabular-nums whitespace-nowrap">{w.target_buy_price != null ? `$${w.target_buy_price.toFixed(2)}` : '—'}</TableCell>
                   <TableCell>
                     <Button variant="ghost" size="sm" type="button" onClick={() => remove(w.id)}>
                       Remove

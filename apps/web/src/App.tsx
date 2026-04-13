@@ -6,6 +6,8 @@ import { SetsPage } from '@/pages/Sets'
 import { WatchlistPage } from '@/pages/Watchlist'
 import { BuySignals } from '@/pages/BuySignals'
 import { CardShowPage } from '@/pages/CardShow'
+import { AlertsPage } from '@/pages/Alerts'
+import { TrackRecordPage } from '@/pages/TrackRecord'
 
 export default function App() {
   return (
@@ -17,6 +19,8 @@ export default function App() {
           <Route path="cards" element={<Cards />} />
           <Route path="watchlist" element={<WatchlistPage />} />
           <Route path="signals" element={<BuySignals />} />
+          <Route path="alerts" element={<AlertsPage />} />
+          <Route path="track-record" element={<TrackRecordPage />} />
           <Route path="card-show" element={<CardShowPage />} />
         </Route>
       </Routes>

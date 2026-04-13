@@ -25,16 +25,36 @@
 
 @layer base {
   :root {
+    color-scheme: light dark;
+  }
+  :root:not(.dark) {
+    color-scheme: light;
+  }
+  .dark {
     color-scheme: dark;
   }
   body {
     @apply antialiased min-h-screen font-sans bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
   }
   * {
     @apply border-border outline-ring/50;
   }
   html {
-    @apply font-sans;
+    @apply font-sans scroll-smooth;
+  }
+  @media (pointer: coarse) {
+    button,
+    a,
+    [role="button"],
+    select,
+    input[type="checkbox"] {
+      min-height: 2.5rem;
+      min-width: 2.5rem;
+    }
+    select {
+      min-height: 2.75rem;
+    }
   }
 }
 
@@ -100,11 +120,11 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --chart-1: oklch(0.65 0.19 250);
+  --chart-2: oklch(0.68 0.17 165);
+  --chart-3: oklch(0.62 0.20 310);
+  --chart-4: oklch(0.70 0.15 55);
+  --chart-5: oklch(0.60 0.22 25);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -114,6 +134,8 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --chart-brush-label: #111111;
+  --chart-brush-label-stroke: rgba(255, 255, 255, 0.65);
 }
 
 .dark {
@@ -135,11 +157,11 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --chart-1: oklch(0.72 0.19 250);
+  --chart-2: oklch(0.74 0.18 165);
+  --chart-3: oklch(0.70 0.20 310);
+  --chart-4: oklch(0.76 0.15 55);
+  --chart-5: oklch(0.68 0.22 25);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -148,4 +170,65 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --chart-brush-label: #ffffff;
+  --chart-brush-label-stroke: rgba(0, 0, 0, 0.5);
+}
+
+.pokemon {
+  --background: oklch(0.97 0.02 250);
+  --foreground: oklch(0.22 0.03 255);
+  --card: oklch(1 0.01 0);
+  --card-foreground: oklch(0.22 0.03 255);
+  --popover: oklch(1 0.01 0);
+  --popover-foreground: oklch(0.22 0.03 255);
+  --primary: oklch(0.64 0.2 252);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.93 0.04 85);
+  --secondary-foreground: oklch(0.22 0.03 255);
+  --muted: oklch(0.95 0.02 250);
+  --muted-foreground: oklch(0.45 0.04 255);
+  --accent: oklch(0.88 0.07 85);
+  --accent-foreground: oklch(0.22 0.03 255);
+  --destructive: oklch(0.62 0.21 28);
+  --border: oklch(0.84 0.03 245);
+  --input: oklch(0.84 0.03 245);
+  --ring: oklch(0.68 0.18 252);
+  --chart-1: oklch(0.63 0.21 252);
+  --chart-2: oklch(0.74 0.17 165);
+  --chart-3: oklch(0.66 0.2 325);
+  --chart-4: oklch(0.79 0.14 85);
+  --chart-5: oklch(0.62 0.21 25);
+  --sidebar: oklch(0.95 0.02 250);
+  --sidebar-foreground: oklch(0.22 0.03 255);
+  --sidebar-primary: oklch(0.63 0.21 252);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.9 0.05 90);
+  --sidebar-accent-foreground: oklch(0.22 0.03 255);
+  --sidebar-border: oklch(0.84 0.03 245);
+  --sidebar-ring: oklch(0.68 0.18 252);
+  --chart-brush-label: #13213b;
+  --chart-brush-label-stroke: rgba(255, 255, 255, 0.8);
+}
+
+/* Cards slideout history brush: improve tick readability/contrast */
+.cards-history-chart .recharts-brush text {
+  fill: var(--chart-brush-label);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  paint-order: stroke;
+  stroke: var(--chart-brush-label-stroke);
+  stroke-width: 1px;
+}
+
+.cards-history-chart .recharts-brush-slide {
+  fill: hsl(var(--background));
+  fill-opacity: 0.92;
+}
+
+.cards-history-chart .recharts-brush-traveller rect {
+  fill: hsl(var(--primary));
+  stroke: hsl(var(--background));
+  stroke-width: 1;
+  rx: 4;
 }

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type Database from 'better-sqlite3'
+import { config } from '../config.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -11,6 +12,13 @@ export function seedPullRates(db: Database.Database) {
     string,
     Record<string, { denominator: number; cards_in_slot: number }>
   >
+  const template = data.sv10
+  if (!template) throw new Error('pull-rate-seed.json must define sv10 as fallback tiers')
+  for (const id of config.targetSetIds) {
+    if (!data[id]) {
+      data[id] = JSON.parse(JSON.stringify(template)) as (typeof data)[string]
+    }
+  }
   const stmt = db.prepare(
     `INSERT INTO pull_rates (set_id, rarity_tier, pull_rate_denominator, cards_in_rarity_slot)
      VALUES (@set_id, @rarity_tier, @pull_rate_denominator, @cards_in_rarity_slot)
