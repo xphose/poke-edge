@@ -35,7 +35,7 @@ if (config.nodeEnv === 'production') {
   const webDist = path.resolve(__dirname, '..', '..', '..', 'apps', 'web', 'dist')
   if (fs.existsSync(webDist)) {
     app.use(express.static(webDist, { maxAge: '1d', etag: true }))
-    app.get('*', (req, res, next) => {
+    app.get('{*path}', (req, res, next) => {
       if (req.path.startsWith('/api')) return next()
       res.sendFile(path.join(webDist, 'index.html'))
     })
