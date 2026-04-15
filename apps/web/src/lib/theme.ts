@@ -1,6 +1,6 @@
 export type ThemeMode = 'light' | 'dark' | 'system' | 'pokemon'
 
-const THEME_KEY = 'pokeedge_theme_mode'
+const THEME_KEY = 'pokegrails_theme_mode'
 
 function prefersDark(): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false

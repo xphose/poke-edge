@@ -44,7 +44,7 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
     const url = `https://www.reddit.com/r/${sub}/new.json?limit=100`
     try {
       const res = await fetchWithRetry(url, {
-        headers: { 'User-Agent': 'PokeEdge/1.0 (local research)' },
+        headers: { 'User-Agent': 'PokeGrails/1.0 (local research)' },
       })
       if (!res.ok) continue
       const data = (await res.json()) as {

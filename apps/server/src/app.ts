@@ -1,6 +1,10 @@
 import cors from 'cors'
 import express from 'express'
+import helmet from 'helmet'
+import compression from 'compression'
+import rateLimit from 'express-rate-limit'
 import type { Database } from 'better-sqlite3'
+import { config } from './config.js'
 import { cacheGet, cacheInvalidateAll, cacheSet, cachedJson } from './cache.js'
 import { buildCardShowHtml } from './services/cardShowExport.js'
 import { getEurPerUsd } from './services/fx.js'
@@ -34,21 +38,55 @@ import {
   getModelRunTime, getRunProgress, isRunning, startRun,
   updateRunProgress, completeRunStep, finishRun,
 } from './services/analytics/shared.js'
+import { authRoutes } from './routes/auth.js'
+import { stripeRoutes, stripeWebhookRoute } from './routes/stripe.js'
+import { authenticate, optionalAuth, requireAdmin, requireRole, isFreeUser, freeSetFilter, getFreeSetIds } from './middleware/auth.js'
 
 /**
  * Express app with all `/api` routes. Pass a database instance (file or :memory: for tests).
  */
 export function createApp(db: Database) {
   const app = express()
-  app.use(cors({ origin: true }))
-  app.use(express.json())
+
+  app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }))
+  app.use(compression())
+  app.use(cors({
+    origin: config.corsOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }))
+
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path === '/api/health',
+  })
+  app.use('/api', apiLimiter)
+
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+  app.use('/api/auth/login', authLimiter)
+  app.use('/api/auth/register', authLimiter)
+
+  app.use('/api/webhooks', express.raw({ type: 'application/json' }), stripeWebhookRoute(db))
+
+  app.use(express.json({ limit: '1mb' }))
+  app.use('/api/auth', authRoutes(db))
+  app.use('/api/subscription', stripeRoutes(db))
 
   app.get('/api/health', (_req, res) => {
     const n = db.prepare(`SELECT COUNT(*) as c FROM cards`).get() as { c: number }
     res.json({ ok: true, cards: n.c })
   })
 
-  app.post('/api/internal/refresh', async (_req, res) => {
+  app.post('/api/internal/refresh', authenticate, requireAdmin, async (_req, res) => {
     const { fullRefresh } = await import('./services/cron.js')
     try {
       await fullRefresh(db)
@@ -59,7 +97,7 @@ export function createApp(db: Database) {
     }
   })
 
-  app.get('/api/dashboard', (_req, res) => {
+  app.get('/api/dashboard', optionalAuth, (req, res) => {
     const cacheKey = 'GET:/api/dashboard'
     const hit = cacheGet(cacheKey)
     if (hit) {
@@ -109,26 +147,30 @@ export function createApp(db: Database) {
     res.json({ ok: true })
   })
 
-  app.get('/api/meta/card-filters', (req, res) => {
+  app.get('/api/meta/card-filters', optionalAuth, (req, res) => {
     const setIdParam = ((req.query.set_id as string) || '').trim()
     const setId = setIdParam.length ? setIdParam : null
-    const cacheKey = `GET:/api/meta/card-filters:set=${setId ?? ''}`
+    const free = isFreeUser(req)
+    const cacheKey = `GET:/api/meta/card-filters:set=${setId ?? ''}:tier=${free ? 'free' : 'full'}`
     const hit = cacheGet(cacheKey)
     if (hit) {
       res.setHeader('Cache-Control', 'private, max-age=30')
       return res.type('json').send(hit)
     }
 
-    const setsWithMeta = db
-      .prepare(
-        `SELECT s.id, s.name, s.release_date, s.series, s.total_cards
+    let setsQuery = `SELECT s.id, s.name, s.release_date, s.series, s.total_cards
          FROM sets s
-         WHERE s.id IN (SELECT DISTINCT set_id FROM cards WHERE set_id IS NOT NULL)
-         ORDER BY CASE WHEN s.release_date IS NULL OR trim(s.release_date) = '' THEN 1 ELSE 0 END ASC,
+         WHERE s.id IN (SELECT DISTINCT set_id FROM cards WHERE set_id IS NOT NULL)`
+    const setsParams: string[] = []
+    if (free) {
+      const allowed = getFreeSetIds(db)
+      setsQuery += ` AND s.id IN (${allowed.map(() => '?').join(', ')})`
+      setsParams.push(...allowed)
+    }
+    setsQuery += ` ORDER BY CASE WHEN s.release_date IS NULL OR trim(s.release_date) = '' THEN 1 ELSE 0 END ASC,
            s.release_date DESC,
-           s.name COLLATE NOCASE ASC`,
-      )
-      .all() as {
+           s.name COLLATE NOCASE ASC`
+    const setsWithMeta = db.prepare(setsQuery).all(...setsParams) as {
       id: string
       name: string | null
       release_date: string | null
@@ -142,25 +184,30 @@ export function createApp(db: Database) {
       sets: setsWithMeta,
       setIds: setsWithMeta.map((s) => s.id),
       printBuckets,
+      tier_limited: free,
     }
     cacheSet(cacheKey, body, 45_000)
     res.setHeader('Cache-Control', 'private, max-age=30')
     res.json(body)
   })
 
-  app.get('/api/cards', (req, res) => {
+  app.get('/api/cards', optionalAuth, (req, res) => {
     const f = parseCardsListFilters(req.query)
     const limitRaw = parseInt(String(req.query.limit ?? '100'), 10)
     const limit = Number.isFinite(limitRaw) ? Math.min(5000, Math.max(1, limitRaw)) : 100
     const offsetRaw = parseInt(String(req.query.offset ?? '0'), 10)
     const offset = Number.isFinite(offsetRaw) ? Math.max(0, offsetRaw) : 0
 
-    const baseWhere = `FROM cards WHERE 1=1${f.whereSuffix}`
-    const countRow = db.prepare(`SELECT COUNT(*) as c ${baseWhere}`).get(...f.params) as { c: number }
+    const tier = freeSetFilter(db, req)
+    const tierSql = tier ? tier.sql : ''
+    const tierParams = tier ? tier.ids : []
+
+    const baseWhere = `FROM cards WHERE 1=1${f.whereSuffix}${tierSql}`
+    const countRow = db.prepare(`SELECT COUNT(*) as c ${baseWhere}`).get(...f.params, ...tierParams) as { c: number }
     const total = countRow.c
 
     const sql = `SELECT * ${baseWhere}${orderByClause(f)} LIMIT ? OFFSET ?`
-    const rows = db.prepare(sql).all(...f.params, limit, offset) as {
+    const rows = db.prepare(sql).all(...f.params, ...tierParams, limit, offset) as {
       id: string
       name: string
       set_id: string | null
@@ -196,6 +243,7 @@ export function createApp(db: Database) {
       total,
       limit,
       offset,
+      tier_limited: !!tier,
     })
   })
 
@@ -217,22 +265,28 @@ export function createApp(db: Database) {
     res.json({ tcgplayer: tcg, ebay, whatnot })
   })
 
-  app.get('/api/cards/:id', (req, res) => {
-    const row = db.prepare(`SELECT * FROM cards WHERE id = ?`).get(req.params.id)
+  app.get('/api/cards/:id', optionalAuth, (req, res) => {
+    const row = db.prepare(`SELECT * FROM cards WHERE id = ?`).get(req.params.id) as { set_id?: string | null } | undefined
     if (!row) return res.status(404).json({ error: 'Not found' })
+    if (isFreeUser(req) && row.set_id) {
+      const allowed = getFreeSetIds(db)
+      if (!allowed.includes(row.set_id)) {
+        return res.status(403).json({ error: 'Upgrade to premium to view cards from older sets' })
+      }
+    }
     const hist = db
       .prepare(
-        `SELECT timestamp, COALESCE(tcgplayer_market, pricecharting_median) AS tcgplayer_market
+        `SELECT timestamp, COALESCE(pricecharting_median, tcgplayer_market) AS tcgplayer_market
          FROM price_history
          WHERE card_id = ?
-           AND (tcgplayer_market IS NOT NULL OR pricecharting_median IS NOT NULL)
+           AND (pricecharting_median IS NOT NULL OR tcgplayer_market IS NOT NULL)
          ORDER BY timestamp DESC`,
       )
       .all(req.params.id)
     res.json({ card: row, priceHistory: hist })
   })
 
-  app.get('/api/cards/:id/investment', (req, res) => {
+  app.get('/api/cards/:id/investment', authenticate, requireRole('premium', 'admin'), (req, res) => {
     const row = db
       .prepare(
         `SELECT c.*, cp.google_trends_score
@@ -295,48 +349,48 @@ export function createApp(db: Database) {
     })
   })
 
-  app.get('/api/signals', (req, res) => {
+  app.get('/api/signals', optionalAuth, (req, res) => {
     const sortParam = ((req.query.sort as string) || 'dollar').toLowerCase()
     const setIdFilter = ((req.query.set_id as string) || '').trim()
     const sortKeys: Record<string, string> = {
-      /** Largest gap between fair value and market (absolute $) */
       dollar: `(predicted_price - COALESCE(market_price, 0)) DESC`,
-      /** Best % discount vs fair value */
       discount: `CASE
         WHEN predicted_price IS NOT NULL AND predicted_price > 0 AND market_price IS NOT NULL
         THEN (predicted_price - market_price) / predicted_price
         ELSE 0 END DESC`,
-      /** Cheapest market first (among signals) */
       market: `(market_price IS NULL), market_price ASC`,
-      /** Highest model fair value first */
       fair: `(predicted_price IS NULL), predicted_price DESC`,
-      /** Alphabetical */
       name: `name COLLATE NOCASE ASC`,
-      /** Group by expansion, then card name */
       set: `(set_id IS NULL), set_id COLLATE NOCASE ASC, name COLLATE NOCASE ASC`,
     }
     const orderBy = sortKeys[sortParam] ?? sortKeys.dollar
     const whereSet = setIdFilter ? ` AND set_id = ?` : ''
+    const tier = freeSetFilter(db, req)
+    const tierSql = tier ? tier.sql : ''
+    const params: string[] = [...(setIdFilter ? [setIdFilter] : []), ...(tier ? tier.ids : [])]
     const rows = db
       .prepare(
-        `SELECT * FROM cards WHERE valuation_flag LIKE '%UNDERVALUED%'${whereSet}
+        `SELECT * FROM cards WHERE valuation_flag LIKE '%UNDERVALUED%'${whereSet}${tierSql}
          ORDER BY ${orderBy} LIMIT 200`,
       )
-      .all(...(setIdFilter ? [setIdFilter] : []))
+      .all(...params)
     res.json(rows)
   })
 
-  app.get('/api/alerts', (_req, res) => {
+  app.get('/api/alerts', optionalAuth, (req, res) => {
+    const tier = freeSetFilter(db, req)
+    const tierSql = tier ? ` AND c.set_id IN (${tier.ids.map(() => '?').join(', ')})` : ''
+    const tierParams = tier ? tier.ids : []
     const rows = db
       .prepare(
         `SELECT c.*, w.target_buy_price, w.alert_active
          FROM cards c
          LEFT JOIN watchlist w ON w.card_id = c.id
-         WHERE c.market_price IS NOT NULL
+         WHERE c.market_price IS NOT NULL${tierSql}
          ORDER BY c.last_updated DESC
          LIMIT 500`,
       )
-      .all() as Array<
+      .all(...tierParams) as Array<
       {
         id: string
         name: string
@@ -370,14 +424,22 @@ export function createApp(db: Database) {
     res.json(out)
   })
 
-  app.get('/api/sets', (_req, res) => {
-    const cacheKey = 'GET:/api/sets'
+  app.get('/api/sets', optionalAuth, (req, res) => {
+    const free = isFreeUser(req)
+    const cacheKey = `GET:/api/sets:tier=${free ? 'free' : 'full'}`
     const hit = cacheGet(cacheKey)
     if (hit) {
       res.setHeader('Cache-Control', 'private, max-age=30')
       return res.type('json').send(hit)
     }
-    const rows = db.prepare(`SELECT * FROM sets ORDER BY release_date DESC`).all()
+    let rows
+    if (free) {
+      const ids = getFreeSetIds(db)
+      const ph = ids.map(() => '?').join(', ')
+      rows = db.prepare(`SELECT * FROM sets WHERE id IN (${ph}) ORDER BY release_date DESC`).all(...ids)
+    } else {
+      rows = db.prepare(`SELECT * FROM sets ORDER BY release_date DESC`).all()
+    }
     cacheSet(cacheKey, rows, 60_000)
     res.setHeader('Cache-Control', 'private, max-age=30')
     res.json(rows)
@@ -572,7 +634,7 @@ export function createApp(db: Database) {
     res.json({ ok: true })
   })
 
-  app.post('/api/internal/backfill-pricecharting', async (req, res) => {
+  app.post('/api/internal/backfill-pricecharting', authenticate, requireAdmin, async (req, res) => {
     const { runPricechartingBackfill } = await import('./services/pricechartingBackfill.js')
     const force = req.query.force === '1' || req.query.force === 'true'
     res.json({ ok: true, message: `Backfill started in background (force=${force}) — watch server console for progress` })
@@ -584,7 +646,7 @@ export function createApp(db: Database) {
     }
   })
 
-  app.post('/api/internal/refresh-sealed', async (_req, res) => {
+  app.post('/api/internal/refresh-sealed', authenticate, requireAdmin, async (_req, res) => {
     try {
       const result = await refreshSealedPrices(db)
       const { refreshSetMetrics } = await import('./services/setMetrics.js')
@@ -596,15 +658,17 @@ export function createApp(db: Database) {
     }
   })
 
-  /* ── Analytics model endpoints ─────────────────────────────── */
+  /* ── Analytics model endpoints (all require premium) ──────── */
 
-  app.get('/api/models/timeseries/:cardId', (req, res) => {
+  const premiumAuth = [authenticate, requireRole('premium', 'admin')] as const
+
+  app.get('/api/models/timeseries/:cardId', ...premiumAuth, (req, res) => {
     const horizon = Math.min(180, Math.max(7, parseInt(String(req.query.horizon ?? '30'), 10) || 30))
     const result = forecastTimeSeries(db, req.params.cardId, horizon)
     res.json(result)
   })
 
-  app.post('/api/models/gradient-boost/train', (_req, res) => {
+  app.post('/api/models/gradient-boost/train', ...premiumAuth, (_req, res) => {
     try {
       const model = trainGradientBoostModel(db)
       res.json({ ok: true, trained_at: model.trainedAt, features: model.featureLabels.length })
@@ -613,72 +677,72 @@ export function createApp(db: Database) {
     }
   })
 
-  app.get('/api/models/gradient-boost/predict/:cardId', (req, res) => {
+  app.get('/api/models/gradient-boost/predict/:cardId', ...premiumAuth, (req, res) => {
     res.json(predictGradientBoost(db, req.params.cardId))
   })
 
-  app.get('/api/models/random-forest/feature-importance', cachedJson(300_000, () => computeFeatureImportance(db)))
+  app.get('/api/models/random-forest/feature-importance', ...premiumAuth, cachedJson(300_000, () => computeFeatureImportance(db)))
 
-  app.get('/api/models/momentum/cards', cachedJson(120_000, (req) => {
+  app.get('/api/models/momentum/cards', ...premiumAuth, cachedJson(120_000, (req) => {
     const all = detectMomentumCards(db)
     const limit = clampInt(req.query.limit, 1, 100, 15)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
     return { items: all.slice(offset, offset + limit), total: all.length }
   }))
 
-  app.get('/api/models/momentum/:cardId', (req, res) => {
+  app.get('/api/models/momentum/:cardId', ...premiumAuth, (req, res) => {
     res.json(getCardMomentum(db, req.params.cardId))
   })
 
-  app.get('/api/models/sentiment/top-positive', cachedJson(120_000, () => getTopSentiment(db, 'positive')))
-  app.get('/api/models/sentiment/top-negative', cachedJson(120_000, () => getTopSentiment(db, 'negative')))
+  app.get('/api/models/sentiment/top-positive', ...premiumAuth, cachedJson(120_000, () => getTopSentiment(db, 'positive')))
+  app.get('/api/models/sentiment/top-negative', ...premiumAuth, cachedJson(120_000, () => getTopSentiment(db, 'negative')))
 
-  app.get('/api/models/sentiment/:cardId', (req, res) => {
+  app.get('/api/models/sentiment/:cardId', ...premiumAuth, (req, res) => {
     res.json(analyzeCardSentiment(db, req.params.cardId))
   })
 
-  app.get('/api/models/supply-shock/alerts', cachedJson(300_000, (req) => {
+  app.get('/api/models/supply-shock/alerts', ...premiumAuth, cachedJson(300_000, (req) => {
     const all = detectSupplyShocks(db)
     const limit = clampInt(req.query.limit, 1, 100, 30)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
     return { items: all.slice(offset, offset + limit), total: all.length }
   }))
 
-  app.get('/api/models/anomalies/recent', cachedJson(120_000, (req) => {
+  app.get('/api/models/anomalies/recent', ...premiumAuth, cachedJson(120_000, (req) => {
     const all = detectAnomalies(db, { days: 30 })
     const limit = clampInt(req.query.limit, 1, 100, 30)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
     return { items: all.slice(offset, offset + limit), total: all.length }
   }))
 
-  app.get('/api/models/anomalies/:cardId', (req, res) => {
+  app.get('/api/models/anomalies/:cardId', ...premiumAuth, (req, res) => {
     res.json(detectAnomalies(db, { cardId: req.params.cardId }))
   })
 
-  app.get('/api/models/cointegration/pairs', cachedJson(300_000, (req) => {
+  app.get('/api/models/cointegration/pairs', ...premiumAuth, cachedJson(300_000, (req) => {
     const all = findCointegrationPairs(db)
     const limit = clampInt(req.query.limit, 1, 100, 20)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
     return { items: all.slice(offset, offset + limit), total: all.length }
   }))
 
-  app.get('/api/models/cointegration/:cardId', (req, res) => {
+  app.get('/api/models/cointegration/:cardId', ...premiumAuth, (req, res) => {
     res.json(findCointegrationPairs(db, { cardId: req.params.cardId, limit: 10 }))
   })
 
-  app.get('/api/models/bayesian/estimate/:cardId', (req, res) => {
+  app.get('/api/models/bayesian/estimate/:cardId', ...premiumAuth, (req, res) => {
     res.json(bayesianEstimate(db, req.params.cardId))
   })
 
-  app.get('/api/models/clusters/all', cachedJson(300_000, () => runClustering(db)))
+  app.get('/api/models/clusters/all', ...premiumAuth, cachedJson(300_000, () => runClustering(db)))
 
-  app.get('/api/models/clusters/:cardId', (req, res) => {
+  app.get('/api/models/clusters/:cardId', ...premiumAuth, (req, res) => {
     res.json(getCardCluster(db, req.params.cardId))
   })
 
-  app.get('/api/models/pca/components', cachedJson(300_000, () => computePCA(db)))
+  app.get('/api/models/pca/components', ...premiumAuth, cachedJson(300_000, () => computePCA(db)))
 
-  app.get('/api/models/status', (_req, res) => {
+  app.get('/api/models/status', ...premiumAuth, (_req, res) => {
     const cacheKey = 'GET:/api/models/status'
     const hit = cacheGet(cacheKey)
     const cached = hit ? JSON.parse(hit) as { total: number; withHistory: number; with30pts: number } : null
@@ -724,7 +788,7 @@ export function createApp(db: Database) {
     })))
   })
 
-  app.get('/api/models/progress', (_req, res) => {
+  app.get('/api/models/progress', ...premiumAuth, (_req, res) => {
     res.json(getRunProgress())
   })
 
@@ -739,7 +803,7 @@ export function createApp(db: Database) {
     cointegration: () => { findCointegrationPairs(db) },
   }
 
-  app.post('/api/models/run/:modelId', (req, res) => {
+  app.post('/api/models/run/:modelId', authenticate, requireAdmin, (req, res) => {
     const { modelId } = req.params
     const runner = MODEL_RUNNERS[modelId]
     if (!runner) return res.status(404).json({ ok: false, error: `Unknown model: ${modelId}` })
@@ -762,7 +826,7 @@ export function createApp(db: Database) {
     res.json({ ok: true, model_id: modelId })
   })
 
-  app.post('/api/models/run-all', (_req, res) => {
+  app.post('/api/models/run-all', authenticate, requireAdmin, (_req, res) => {
     const modelIds = Object.keys(MODEL_RUNNERS)
     if (!startRun(modelIds.length, modelIds)) {
       return res.status(409).json({ ok: false, error: 'A run is already in progress' })
@@ -809,10 +873,10 @@ function getSparklineMap(db: Database, cardIds: string[]): Map<string, { p: numb
   const placeholders = cardIds.map(() => '?').join(', ')
   const rows = db
     .prepare(
-      `SELECT card_id, timestamp, COALESCE(tcgplayer_market, pricecharting_median) AS price
+      `SELECT card_id, timestamp, COALESCE(pricecharting_median, tcgplayer_market) AS price
        FROM price_history
        WHERE card_id IN (${placeholders})
-         AND (tcgplayer_market IS NOT NULL OR pricecharting_median IS NOT NULL)
+         AND (pricecharting_median IS NOT NULL OR tcgplayer_market IS NOT NULL)
        ORDER BY card_id ASC, timestamp DESC`,
     )
     .all(...cardIds) as { card_id: string; timestamp: string; price: number | null }[]

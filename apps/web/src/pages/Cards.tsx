@@ -29,6 +29,7 @@ import {
   type CardsListResponse,
   type SetMeta,
 } from '@/lib/api'
+import { UpgradeBanner } from '@/components/UpgradeBanner'
 import { SetMetaTooltipBody, setHoverTitle } from '@/components/set-meta-tooltip'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -97,7 +98,7 @@ const COLUMN_LABELS: Record<ColumnId, string> = {
 const ALL_COLUMNS: ColumnId[] = Object.keys(COLUMN_LABELS) as ColumnId[]
 const DEFAULT_VISIBLE = new Set<ColumnId>(ALL_COLUMNS)
 
-const COL_VIS_KEY = 'pokeedge_cards_col_vis'
+const COL_VIS_KEY = 'pokegrails_cards_col_vis'
 
 function loadColumnVisibility(): Set<ColumnId> {
   try {
@@ -512,6 +513,7 @@ export function Cards() {
           </p>
           <HelpButton sectionId="cards-overview" className="mt-[-2px]" />
         </div>
+        <UpgradeBanner />
 
         <div className="flex shrink-0 flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
@@ -951,12 +953,13 @@ export function Cards() {
               value={adjustPrice(sel?.predicted_price ?? null, condition)}
               prefix="$"
             />
-            <Explain label="Market (TCGPlayer)" value={sel?.market_price} prefix="$" />
+            <Explain label="Market (raw/ungraded)" value={sel?.market_price} prefix="$" />
             <Explain
               label={`Market × ${condition}`}
               value={adjustPrice(sel?.market_price ?? null, condition)}
               prefix="$"
             />
+            {sel && hasGradedPrices(sel) && <GradedPricesPanel card={sel} />}
             {sel &&
               gapDollars(sel.predicted_price, sel.market_price) != null &&
               (() => {
@@ -1763,6 +1766,91 @@ function MiniSpark({ data }: { data: { p: number }[] }) {
           {min !== max ? `$${min.toFixed(0)}–${max.toFixed(0)}` : `$${min.toFixed(0)}`}
         </span>
       </div>
+    </div>
+  )
+}
+
+function hasGradedPrices(card: CardRow): boolean {
+  return !!(card.pc_price_raw || card.pc_price_grade7 || card.pc_price_grade8 ||
+    card.pc_price_grade9 || card.pc_price_grade95 || card.pc_price_psa10)
+}
+
+type GradeKey = 'raw' | '7' | '8' | '9' | '9.5' | '10' | 'bgs10'
+
+const GRADE_OPTIONS: { key: GradeKey; label: string }[] = [
+  { key: 'raw', label: 'Raw / Ungraded' },
+  { key: '7', label: 'PSA 7' },
+  { key: '8', label: 'PSA 8' },
+  { key: '9', label: 'PSA 9' },
+  { key: '9.5', label: 'PSA 9.5' },
+  { key: '10', label: 'PSA 10' },
+  { key: 'bgs10', label: 'BGS 10' },
+]
+
+function getGradePrice(card: CardRow, grade: GradeKey): number | null {
+  switch (grade) {
+    case 'raw': return card.pc_price_raw
+    case '7': return card.pc_price_grade7
+    case '8': return card.pc_price_grade8
+    case '9': return card.pc_price_grade9
+    case '9.5': return card.pc_price_grade95
+    case '10': return card.pc_price_psa10
+    case 'bgs10': return card.pc_price_bgs10
+    default: return null
+  }
+}
+
+function GradedPricesPanel({ card }: { card: CardRow }) {
+  const [selectedGrade, setSelectedGrade] = useState<GradeKey>('raw')
+  const selectedPrice = getGradePrice(card, selectedGrade)
+  const rawPrice = card.pc_price_raw
+
+  const available = GRADE_OPTIONS.filter(o => {
+    const p = getGradePrice(card, o.key)
+    return p != null && p > 0
+  })
+
+  if (available.length === 0) return null
+
+  const gradingCost = 25
+  const roiTarget = selectedGrade !== 'raw' && rawPrice && rawPrice > 0 && selectedPrice
+    ? ((selectedPrice - gradingCost - rawPrice) / rawPrice) * 100
+    : null
+
+  return (
+    <div className="mt-2 rounded-md border border-border/60 bg-muted/15 p-2.5">
+      <p className="mb-2 text-xs font-semibold text-foreground">PriceCharting — graded prices</p>
+      <div className="grid grid-cols-2 gap-1.5 text-xs sm:grid-cols-3">
+        {available.map(({ key, label }) => {
+          const price = getGradePrice(card, key)!
+          const isSelected = key === selectedGrade
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSelectedGrade(key)}
+              className={cn(
+                'rounded-md border px-2 py-1.5 text-left transition-colors',
+                isSelected
+                  ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
+                  : 'border-border/60 hover:bg-muted/40',
+              )}
+            >
+              <p className="text-[0.65rem] text-muted-foreground">{label}</p>
+              <p className="tabular-nums font-semibold">${price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+            </button>
+          )
+        })}
+      </div>
+      {roiTarget != null && rawPrice != null && rawPrice > 0 && (
+        <div className="mt-2 rounded-md border border-border/40 bg-background/60 px-2 py-1.5 text-xs">
+          <span className="text-muted-foreground">Grading ROI ({GRADE_OPTIONS.find(o => o.key === selectedGrade)?.label}): </span>
+          <span className={cn('font-semibold tabular-nums', roiTarget >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500')}>
+            {roiTarget >= 0 ? '+' : ''}{roiTarget.toFixed(1)}%
+          </span>
+          <span className="text-muted-foreground"> · Raw ${rawPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} → graded ${selectedPrice!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} − $25 grading</span>
+        </div>
+      )}
     </div>
   )
 }

@@ -55,7 +55,7 @@ function deduplicateDaily(rows: PricePoint[]): PricePoint[] {
 
 export function loadPriceHistory(db: Database.Database, cardId: string): PricePoint[] {
   const rows = db.prepare(`
-    SELECT timestamp, COALESCE(tcgplayer_market, pricecharting_median) AS price
+    SELECT timestamp, COALESCE(pricecharting_median, tcgplayer_market) AS price
     FROM price_history
     WHERE card_id = ?
       AND (tcgplayer_market IS NOT NULL OR pricecharting_median IS NOT NULL)
@@ -66,9 +66,9 @@ export function loadPriceHistory(db: Database.Database, cardId: string): PricePo
 
 export function loadAllPriceHistory(db: Database.Database): Map<string, PricePoint[]> {
   const rows = db.prepare(`
-    SELECT card_id, timestamp, COALESCE(tcgplayer_market, pricecharting_median) AS price
+    SELECT card_id, timestamp, COALESCE(pricecharting_median, tcgplayer_market) AS price
     FROM price_history
-    WHERE tcgplayer_market IS NOT NULL OR pricecharting_median IS NOT NULL
+    WHERE pricecharting_median IS NOT NULL OR tcgplayer_market IS NOT NULL
     ORDER BY card_id, timestamp ASC
   `).all() as (PricePoint & { card_id: string })[]
 

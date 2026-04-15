@@ -1,4 +1,4 @@
-# PokéEdge — Analytics Models Audit
+# PokeGrails — Analytics Models Audit
 
 > Phase 0 discovery completed. Stack: Node.js / TypeScript / Express 5 / better-sqlite3 / React 19 / Recharts / Tailwind 4 / Vitest.
 

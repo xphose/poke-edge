@@ -22,7 +22,7 @@ type WRow = {
   market_price: number | null
 }
 
-const LS_KEY = 'pokeedge_watchlist_local'
+const LS_KEY = 'pokegrails_watchlist_local'
 
 export function WatchlistPage() {
   const queryClient = useQueryClient()

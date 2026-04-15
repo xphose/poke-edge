@@ -43,7 +43,7 @@ export async function buildCardShowHtml(db: Database.Database): Promise<string> 
     .join('')
 
   return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"/><title>PokéEdge — Card Show</title>
+<html lang="en"><head><meta charset="utf-8"/><title>PokeGrails — Card Show</title>
 <style>
   body { font-family: system-ui, sans-serif; background:#111; color:#eee; padding:16px; }
   table { width:100%; border-collapse:collapse; font-size:12px; }
@@ -53,7 +53,7 @@ export async function buildCardShowHtml(db: Database.Database): Promise<string> 
   .meta { color:#888; font-size:11px; margin-bottom:12px; }
   @media print { body { background:#fff; color:#000; } th { background:#eee; } }
 </style></head><body>
-  <h1>PokéEdge — Top buy signals</h1>
+  <h1>PokeGrails — Top buy signals</h1>
   <p class="meta">Data refresh: ${escapeHtml(ts)} · Open live dashboard for spot checks.</p>
   <img src="${qr}" alt="QR" width="96" height="96"/>
   <table>

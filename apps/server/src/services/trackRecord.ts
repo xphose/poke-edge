@@ -235,7 +235,7 @@ export function computeTrackRecord(db: Database.Database): TrackRecordResponse {
     // Also try to get the actual price at signal date from price_history for more accuracy
     const histPrice = db
       .prepare(
-        `SELECT COALESCE(tcgplayer_market, pricecharting_median) AS price
+        `SELECT COALESCE(pricecharting_median, tcgplayer_market) AS price
          FROM price_history
          WHERE card_id = ? AND timestamp >= ? || 'T00:00:00'
          ORDER BY timestamp ASC LIMIT 1`,
@@ -267,7 +267,7 @@ export function computeTrackRecord(db: Database.Database): TrackRecordResponse {
 
     const histPrice = db
       .prepare(
-        `SELECT COALESCE(tcgplayer_market, pricecharting_median) AS price
+        `SELECT COALESCE(pricecharting_median, tcgplayer_market) AS price
          FROM price_history
          WHERE card_id = ? AND timestamp <= ?
          ORDER BY timestamp DESC LIMIT 1`,

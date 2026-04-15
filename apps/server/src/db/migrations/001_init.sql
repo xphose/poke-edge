@@ -1,4 +1,4 @@
--- PokéEdge core schema + operational tables
+-- PokeGrails core schema + operational tables
 
 CREATE TABLE IF NOT EXISTS api_cache (
   cache_key TEXT PRIMARY KEY,

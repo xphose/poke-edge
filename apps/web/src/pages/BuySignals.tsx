@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { ZoomIn } from 'lucide-react'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { UpgradeBanner } from '@/components/UpgradeBanner'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
@@ -116,6 +117,7 @@ export function BuySignals() {
           <p className="mt-1 max-w-2xl text-xs text-muted-foreground sm:text-sm">
             Undervalued candidates ranked by discount, savings, price, or set.
           </p>
+          <div className="mt-2"><UpgradeBanner /></div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:items-center">
           <div className="flex flex-col gap-1">

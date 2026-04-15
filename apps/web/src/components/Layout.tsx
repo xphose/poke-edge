@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 import { applyThemeMode, getStoredThemeMode, setStoredThemeMode, type ThemeMode } from '@/lib/theme'
 import { HelpMenuButton } from '@/components/help-center'
+import { useAuth } from '@/lib/auth'
 
 const tabs = [
   { to: '/', label: 'Dashboard', end: true },
@@ -20,6 +21,7 @@ export function Layout() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredThemeMode())
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const location = useLocation()
+  const { user, logout } = useAuth()
 
   useEffect(() => {
     applyThemeMode(themeMode)
@@ -50,7 +52,7 @@ export function Layout() {
                 )}
               </button>
               <Link to="/" className="text-lg font-semibold tracking-tight text-primary sm:text-xl">
-                PokéEdge
+                PokeGrails
               </Link>
             </div>
             <div className="flex items-center gap-2">
@@ -58,6 +60,29 @@ export function Layout() {
                 Pokémon TCG pricing signals, pull-cost vs demand, and buy links
               </p>
               <HelpMenuButton />
+              {user ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {user.username}
+                    {user.role !== 'free' && (
+                      <span className="ml-1 rounded bg-primary/20 px-1 py-0.5 text-[10px] uppercase text-primary">
+                        {user.role}
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <Link to="/login" className="rounded px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10">
+                  Sign in
+                </Link>
+              )}
               <div className="inline-flex items-center rounded-md border border-border bg-background p-0.5">
                 {(['light', 'dark', 'pokemon', 'system'] as const).map((m) => (
                   <button
@@ -135,9 +160,15 @@ export function Layout() {
         <Outlet />
       </main>
       <footer className="border-t border-border py-3 text-center text-xs text-muted-foreground sm:py-4">
-        <p>
-          API at <code className="rounded bg-muted px-1 py-0.5">/api</code> — start stack with{' '}
-          <code className="rounded bg-muted px-1 py-0.5">npm run dev</code> from repo root.
+        <div className="flex items-center justify-center gap-3">
+          <span>&copy; {new Date().getFullYear()} PokeGrails</span>
+          <span className="text-border">·</span>
+          <Link to="/privacy" className="hover:text-foreground hover:underline">Privacy</Link>
+          <span className="text-border">·</span>
+          <Link to="/terms" className="hover:text-foreground hover:underline">Terms</Link>
+        </div>
+        <p className="mt-1 text-[10px]">
+          Not financial advice. All predictions are model-generated estimates.
         </p>
       </footer>
     </div>

@@ -4,10 +4,10 @@ self.addEventListener('push', (event) => {
   try {
     data = event.data ? event.data.json() : {}
   } catch {
-    data = { title: 'PokéEdge', body: 'Price update' }
+    data = { title: 'PokeGrails', body: 'Price update' }
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || 'PokéEdge', {
+    self.registration.showNotification(data.title || 'PokeGrails', {
       body: data.body || '',
     }),
   )

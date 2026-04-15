@@ -1,5 +1,5 @@
 {
-  "name": "poke-edge",
+  "name": "pokegrails",
   "private": true,
   "workspaces": [
     "apps/*"

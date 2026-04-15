@@ -9,7 +9,7 @@ export function CardShowPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `pokeedge-card-show-${new Date().toISOString().slice(0, 10)}.html`
+    a.download = `pokegrails-card-show-${new Date().toISOString().slice(0, 10)}.html`
     a.click()
     URL.revokeObjectURL(url)
   }

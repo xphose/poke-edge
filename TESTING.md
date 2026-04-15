@@ -1,4 +1,4 @@
-# PokéEdge — testing and manual QA
+# PokeGrails — testing and manual QA
 
 ## Quick run
 

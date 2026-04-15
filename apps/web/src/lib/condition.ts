@@ -17,8 +17,8 @@ export const CONDITION_PCT: Record<string, number> = {
 
 export type ConditionCode = keyof typeof CONDITION_PCT
 
-const LS_COND = 'pokeedge_condition'
-const LS_ADJ = 'pokeedge_show_adjusted'
+const LS_COND = 'pokegrails_condition'
+const LS_ADJ = 'pokegrails_show_adjusted'
 
 export function loadStoredCondition(): ConditionCode {
   try {

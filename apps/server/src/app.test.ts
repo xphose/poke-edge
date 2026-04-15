@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import request from 'supertest'
 import { createApp } from './app.js'
-import { openMemoryDb, seedMinimalCard } from './test/helpers.js'
+import { openMemoryDb, seedMinimalCard, adminToken, premiumToken } from './test/helpers.js'
 
 describe('createApp', () => {
   let db: ReturnType<typeof openMemoryDb>
@@ -174,7 +174,7 @@ describe('createApp', () => {
   it('GET /api/cards/:id/investment returns enriched model output', async () => {
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/cards/test-card-1/investment').expect(200)
+    const res = await request(app).get('/api/cards/test-card-1/investment').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(res.body.card_name).toBe('Pikachu')
     expect(typeof res.body.composite_score).toBe('number')
     expect(res.body.signal_breakdown).toBeTruthy()
@@ -256,7 +256,7 @@ describe('Model run endpoints', () => {
 
   it('GET /api/models/progress returns full progress shape', async () => {
     const app = createApp(db)
-    const res = await request(app).get('/api/models/progress').expect(200)
+    const res = await request(app).get('/api/models/progress').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(typeof res.body.running).toBe('boolean')
     expect(Array.isArray(res.body.completed)).toBe(true)
     expect(Array.isArray(res.body.queued)).toBe(true)
@@ -268,19 +268,19 @@ describe('Model run endpoints', () => {
 
   it('POST /api/models/run/:modelId returns 404 for unknown model', async () => {
     const app = createApp(db)
-    await request(app).post('/api/models/run/nonexistent').expect(404)
+    await request(app).post('/api/models/run/nonexistent').set('Authorization', `Bearer ${adminToken()}`).expect(404)
   })
 
   it('POST /api/models/run-all starts a run', async () => {
     const app = createApp(db)
-    const res = await request(app).post('/api/models/run-all').expect(200)
+    const res = await request(app).post('/api/models/run-all').set('Authorization', `Bearer ${adminToken()}`).expect(200)
     expect(res.body.ok).toBe(true)
     expect(res.body.started_at).toBeTruthy()
   })
 
   it('GET /api/models/status returns array with expected fields', async () => {
     const app = createApp(db)
-    const res = await request(app).get('/api/models/status').expect(200)
+    const res = await request(app).get('/api/models/status').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(Array.isArray(res.body)).toBe(true)
     if (res.body.length > 0) {
       const m = res.body[0]
@@ -298,7 +298,7 @@ describe('Paginated analytics endpoints', () => {
     const db = openMemoryDb()
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/models/momentum/cards').expect(200)
+    const res = await request(app).get('/api/models/momentum/cards').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(typeof res.body.items).toBe('object')
     expect(Array.isArray(res.body.items)).toBe(true)
     expect(typeof res.body.total).toBe('number')
@@ -308,7 +308,7 @@ describe('Paginated analytics endpoints', () => {
     const db = openMemoryDb()
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/models/anomalies/recent').expect(200)
+    const res = await request(app).get('/api/models/anomalies/recent').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(Array.isArray(res.body.items)).toBe(true)
     expect(typeof res.body.total).toBe('number')
   })
@@ -317,7 +317,7 @@ describe('Paginated analytics endpoints', () => {
     const db = openMemoryDb()
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/models/supply-shock/alerts').expect(200)
+    const res = await request(app).get('/api/models/supply-shock/alerts').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(Array.isArray(res.body.items)).toBe(true)
     expect(typeof res.body.total).toBe('number')
   })
@@ -326,7 +326,7 @@ describe('Paginated analytics endpoints', () => {
     const db = openMemoryDb()
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/models/cointegration/pairs').expect(200)
+    const res = await request(app).get('/api/models/cointegration/pairs').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(Array.isArray(res.body.items)).toBe(true)
     expect(typeof res.body.total).toBe('number')
   })
@@ -335,7 +335,7 @@ describe('Paginated analytics endpoints', () => {
     const db = openMemoryDb()
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/models/momentum/cards?limit=1&offset=0').expect(200)
+    const res = await request(app).get('/api/models/momentum/cards?limit=1&offset=0').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     expect(res.body.items.length).toBeLessThanOrEqual(1)
   })
 })
@@ -345,7 +345,7 @@ describe('Negotiation pricing', () => {
     const db = openMemoryDb()
     seedMinimalCard(db)
     const app = createApp(db)
-    const res = await request(app).get('/api/cards/test-card-1/investment').expect(200)
+    const res = await request(app).get('/api/cards/test-card-1/investment').set('Authorization', `Bearer ${premiumToken()}`).expect(200)
     const { negotiation } = res.body
     expect(negotiation.opening_offer).toBeLessThan(negotiation.max_pay)
     expect(negotiation.ideal_price).toBeLessThan(negotiation.max_pay)

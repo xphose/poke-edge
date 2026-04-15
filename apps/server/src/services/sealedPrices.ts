@@ -87,7 +87,7 @@ async function fetchTcgPlayerPrice(productId: number): Promise<number | null> {
   try {
     const url = `https://mpapi.tcgplayer.com/v2/product/${productId}/pricepoints`
     const resp = await fetch(url, {
-      headers: { 'User-Agent': 'PokeEdge/1.0', Accept: 'application/json' },
+      headers: { 'User-Agent': 'PokeGrails/1.0', Accept: 'application/json' },
       signal: AbortSignal.timeout(10_000),
     })
     if (!resp.ok) return null

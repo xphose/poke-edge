@@ -1,10 +1,24 @@
+import { getAccessToken, refreshAccessToken, clearTokens } from './auth'
+
 const base = ''
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${base}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-  })
+  let token = getAccessToken()
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...init?.headers as Record<string, string> }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
+  let res = await fetch(`${base}${path}`, { ...init, headers })
+
+  if (res.status === 401 && token) {
+    const newToken = await refreshAccessToken()
+    if (newToken) {
+      headers['Authorization'] = `Bearer ${newToken}`
+      res = await fetch(`${base}${path}`, { ...init, headers })
+    } else {
+      clearTokens()
+    }
+  }
+
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
   return res.json() as Promise<T>
 }
@@ -42,6 +56,13 @@ export type CardRow = {
   undervalued_since: string | null
   future_value_12m: number | null
   annual_growth_rate: number | null
+  pc_price_raw: number | null
+  pc_price_grade7: number | null
+  pc_price_grade8: number | null
+  pc_price_grade9: number | null
+  pc_price_grade95: number | null
+  pc_price_psa10: number | null
+  pc_price_bgs10: number | null
   ai_score?: number
   ai_decision?: 'BUY' | 'WATCH' | 'PASS'
   spark_30d?: { p: number }[]
@@ -53,6 +74,7 @@ export type CardsListResponse = {
   total: number
   limit: number
   offset: number
+  tier_limited?: boolean
 }
 
 /**

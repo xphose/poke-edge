@@ -29,6 +29,13 @@ export function runMigrations(db: Database.Database) {
   safeAdd('sets', 'product_packs', 'INTEGER DEFAULT 36')
   safeAdd('sets', 'price_sources', 'INTEGER DEFAULT 0')
   safeAdd('sets', 'price_confidence', "TEXT DEFAULT 'low'")
+  safeAdd('cards', 'pc_price_raw', 'REAL')
+  safeAdd('cards', 'pc_price_grade7', 'REAL')
+  safeAdd('cards', 'pc_price_grade8', 'REAL')
+  safeAdd('cards', 'pc_price_grade9', 'REAL')
+  safeAdd('cards', 'pc_price_grade95', 'REAL')
+  safeAdd('cards', 'pc_price_psa10', 'REAL')
+  safeAdd('cards', 'pc_price_bgs10', 'REAL')
 
   db.exec(`CREATE TABLE IF NOT EXISTS sealed_products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,6 +47,33 @@ export function runMigrations(db: Database.Database) {
     fetched_at TEXT NOT NULL
   )`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sealed_set_type ON sealed_products(set_id, product_type, fetched_at)`)
+
+  db.exec(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'free' CHECK(role IN ('free', 'premium', 'admin')),
+    stripe_customer_id TEXT,
+    stripe_subscription_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login TEXT
+  )`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`)
+
+  db.exec(`CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash)`)
+
+  safeAdd('users', 'display_name', 'TEXT')
 
   db.exec(`CREATE TABLE IF NOT EXISTS prediction_snapshots (
     card_id TEXT NOT NULL,

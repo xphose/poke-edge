@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
+import { UpgradeBanner } from '@/components/UpgradeBanner'
 import {
   loadSetsVerdictFilter,
   saveSetsVerdictFilter,
@@ -179,6 +180,7 @@ export function SetsPage() {
         </p>
         <HelpButton sectionId="sets-overview" className="mt-[-2px]" />
       </div>
+      <UpgradeBanner />
 
       <div className="flex flex-wrap items-center gap-2">
         <Label className="text-sm text-muted-foreground">Show:</Label>

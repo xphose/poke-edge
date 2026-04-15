@@ -51,7 +51,7 @@ export async function notifyPriceAlerts(db: Database.Database) {
         await webpush.sendNotification(
           { endpoint: s.endpoint, keys },
           JSON.stringify({
-            title: 'PokéEdge price alert',
+            title: 'PokeGrails price alert',
             body: `${r.name} is at $${r.market_price.toFixed(2)} (target $${r.target_buy_price.toFixed(2)})`,
           }),
         )

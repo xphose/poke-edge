@@ -61,6 +61,8 @@ export interface TcgPriceEnvelope {
   updatedAt: string | null
 }
 
+const TCGPLAYER_CAP = 99_999
+
 function tcgplayerPrices(card: Record<string, unknown>): TcgPriceEnvelope {
   const env: TcgPriceEnvelope = { market: null, low: null, mid: null, high: null, updatedAt: null }
   const tcg = card.tcgplayer as Record<string, unknown> | undefined
@@ -68,13 +70,14 @@ function tcgplayerPrices(card: Record<string, unknown>): TcgPriceEnvelope {
   env.updatedAt = typeof tcg.updatedAt === 'string' ? tcg.updatedAt : null
   const prices = tcg.prices as Record<string, Record<string, number>> | undefined
   if (!prices) return env
+  const ok = (v: unknown): v is number => typeof v === 'number' && v > 0 && v < TCGPLAYER_CAP
   for (const k of Object.keys(prices)) {
     const p = prices[k]
     if (!p) continue
-    if (typeof p.market === 'number' && p.market > 0) env.market ??= p.market
-    if (typeof p.low === 'number' && p.low > 0) env.low ??= p.low
-    if (typeof p.mid === 'number' && p.mid > 0) env.mid ??= p.mid
-    if (typeof p.high === 'number' && p.high > 0) env.high ??= p.high
+    if (ok(p.market)) env.market ??= p.market
+    if (ok(p.low)) env.low ??= p.low
+    if (ok(p.mid)) env.mid ??= p.mid
+    if (ok(p.high)) env.high ??= p.high
   }
   return env
 }
@@ -209,7 +212,7 @@ export function upsertCardsFromApi(db: Database.Database, setId: string, cards: 
       last_updated = excluded.last_updated`,
   )
 
-  const oldPriceStmt = db.prepare(`SELECT market_price FROM cards WHERE id = ?`)
+  const oldPriceStmt = db.prepare(`SELECT market_price, pricecharting_median FROM cards WHERE id = ?`)
   const historyCountStmt = db.prepare(`SELECT COUNT(*) as c FROM price_history WHERE card_id = ?`)
   const historyStmt = db.prepare(
     `INSERT INTO price_history (card_id, timestamp, tcgplayer_market, tcgplayer_low, ebay_median)
@@ -226,12 +229,14 @@ export function upsertCardsFromApi(db: Database.Database, setId: string, cards: 
       const name = String(c.name || '')
       const rarity = (c.rarity as string) || ''
       const env = tcgplayerPrices(c)
-      const market = env.market ?? env.mid ?? null
+      const cmEur = cardmarketBestEur(c)
       const artist = typeof c.artist === 'string' ? c.artist : null
 
-      const oldRow = oldPriceStmt.get(id) as { market_price: number | null } | undefined
+      const oldRow = oldPriceStmt.get(id) as { market_price: number | null; pricecharting_median: number | null } | undefined
       const oldPrice = oldRow?.market_price ?? null
-      const cmEur = cardmarketBestEur(c)
+      const pcMedian = oldRow?.pricecharting_median ?? null
+      const tcgMarket = env.market ?? env.mid ?? null
+      const market = (pcMedian && pcMedian > 0 ? pcMedian : null) ?? tcgMarket ?? cmEur ?? null
 
       cardStmt.run({
         id,

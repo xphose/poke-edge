@@ -11,7 +11,7 @@ async function throttledFetch(url: string, minGapMs = 1100): Promise<Response> {
   if (elapsed < minGapMs) await sleep(minGapMs - elapsed)
   lastRequest = Date.now()
   return fetch(url, {
-    headers: { 'User-Agent': 'PokeEdge/1.0', Accept: '*/*' },
+    headers: { 'User-Agent': 'PokeGrails/1.0', Accept: '*/*' },
     signal: AbortSignal.timeout(20_000),
   })
 }
@@ -37,6 +37,33 @@ interface PcMatch {
   productName: string
   loosePriceDollars: number | null
   salesVolume: number
+  gradedPrices: GradedPrices
+}
+
+export interface GradedPrices {
+  raw: number | null
+  grade7: number | null
+  grade8: number | null
+  grade9: number | null
+  grade95: number | null
+  psa10: number | null
+  bgs10: number | null
+}
+
+function pennies(v: unknown): number | null {
+  return typeof v === 'number' && v > 0 ? v / 100 : null
+}
+
+function extractGradedPrices(d: Record<string, unknown>): GradedPrices {
+  return {
+    raw: pennies(d['loose-price']),
+    grade7: pennies(d['cib-price']),
+    grade8: pennies(d['new-price']),
+    grade9: pennies(d['graded-price']),
+    grade95: pennies(d['box-only-price']),
+    psa10: pennies(d['manual-only-price']),
+    bgs10: pennies(d['bgs-10-price']),
+  }
 }
 
 async function matchCard(token: string, name: string, number: string, setName?: string | null): Promise<PcMatch | null> {
@@ -52,12 +79,13 @@ async function matchCard(token: string, name: string, number: string, setName?: 
     pcId: String(d.id),
     consoleName: String(d['console-name'] ?? ''),
     productName: String(d['product-name'] ?? ''),
-    loosePriceDollars: typeof d['loose-price'] === 'number' ? (d['loose-price'] as number) / 100 : null,
+    loosePriceDollars: pennies(d['loose-price']),
     salesVolume: parseInt(String(d['sales-volume'] ?? '0'), 10) || 0,
+    gradedPrices: extractGradedPrices(d),
   }
 }
 
-async function fetchPcMeta(token: string, pcId: string): Promise<{ consoleName: string; productName: string } | null> {
+async function fetchPcMeta(token: string, pcId: string): Promise<{ consoleName: string; productName: string; gradedPrices: GradedPrices } | null> {
   const url = `${PC_BASE}/api/product?t=${token}&id=${pcId}`
   const resp = await throttledFetch(url)
   if (!resp.ok) return null
@@ -66,6 +94,7 @@ async function fetchPcMeta(token: string, pcId: string): Promise<{ consoleName: 
   return {
     consoleName: String(d['console-name'] ?? ''),
     productName: String(d['product-name'] ?? ''),
+    gradedPrices: extractGradedPrices(d),
   }
 }
 
@@ -243,7 +272,12 @@ export async function runPricechartingBackfill(db: Database.Database, opts: { fo
     set_name: string | null
   }[]
 
-  const updatePcStmt = db.prepare(`UPDATE cards SET pricecharting_id = ?, pricecharting_median = ? WHERE id = ?`)
+  const updatePcStmt = db.prepare(
+    `UPDATE cards SET pricecharting_id = ?, pricecharting_median = ?,
+       pc_price_raw = ?, pc_price_grade7 = ?, pc_price_grade8 = ?,
+       pc_price_grade9 = ?, pc_price_grade95 = ?, pc_price_psa10 = ?, pc_price_bgs10 = ?
+     WHERE id = ?`,
+  )
   const pcMeta = new Map<string, { consoleName: string; productName: string }>()
   let alreadyMatched = 0
 
@@ -261,7 +295,12 @@ export async function runPricechartingBackfill(db: Database.Database, opts: { fo
       const num = extractNumber(card.id)
       const result = await matchCard(token, card.name, num, card.set_name)
       if (result) {
-        updatePcStmt.run(result.pcId, result.loosePriceDollars, card.id)
+        const g = result.gradedPrices
+        updatePcStmt.run(
+          result.pcId, result.loosePriceDollars,
+          g.raw, g.grade7, g.grade8, g.grade9, g.grade95, g.psa10, g.bgs10,
+          card.id,
+        )
         pcMeta.set(card.id, { consoleName: result.consoleName, productName: result.productName })
         card.pricecharting_id = result.pcId
         stats.cardsMatched++
@@ -288,7 +327,15 @@ export async function runPricechartingBackfill(db: Database.Database, opts: { fo
       const card = needsMeta[i]
       try {
         const meta = await fetchPcMeta(token, card.pricecharting_id!)
-        if (meta) pcMeta.set(card.id, meta)
+        if (meta) {
+          pcMeta.set(card.id, meta)
+          const g = meta.gradedPrices
+          updatePcStmt.run(
+            card.pricecharting_id!, g.raw,
+            g.raw, g.grade7, g.grade8, g.grade9, g.grade95, g.psa10, g.bgs10,
+            card.id,
+          )
+        }
       } catch {
         stats.errors++
       }

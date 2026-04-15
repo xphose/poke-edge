@@ -2,13 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
+import { AuthProvider } from '@/lib/auth'
 import { AnalyticsPage } from './Analytics'
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
     <QueryClientProvider client={qc}>
-      <MemoryRouter>{children}</MemoryRouter>
+      <AuthProvider>
+        <MemoryRouter>{children}</MemoryRouter>
+      </AuthProvider>
     </QueryClientProvider>
   )
 }
@@ -25,6 +28,9 @@ const mockProgress = { running: false, current_model: null, completed: [], queue
 function mockFetchForUrls() {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = typeof input === 'string' ? input : (input as Request).url
+    if (url.includes('/api/auth/')) {
+      return { ok: false, status: 401, json: async () => ({ error: 'not authenticated' }), text: async () => 'not authenticated' } as unknown as Response
+    }
     if (url.includes('/api/models/progress')) {
       return { ok: true, json: async () => mockProgress } as Response
     }

@@ -26,6 +26,13 @@ function makeCard(overrides: Partial<CardRow>): CardRow {
     undervalued_since: null,
     future_value_12m: null,
     annual_growth_rate: null,
+    pc_price_raw: null,
+    pc_price_grade7: null,
+    pc_price_grade8: null,
+    pc_price_grade9: null,
+    pc_price_grade95: null,
+    pc_price_psa10: null,
+    pc_price_bgs10: null,
     ...overrides,
   }
 }
@@ -61,6 +68,9 @@ function mockDashboardApi(fixture: DashboardApiFixture) {
     'fetch',
     vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.includes('/api/auth/')) {
+        return new Response(JSON.stringify({ error: 'not authenticated' }), { status: 401 })
+      }
       const hit = Object.entries(payloads).find(([path]) => url.endsWith(path))
       if (!hit) return new Response('not found', { status: 404 })
       return new Response(JSON.stringify(hit[1]), {
@@ -86,7 +96,7 @@ function renderDashboard() {
 
 describe('Dashboard data tabs', () => {
   beforeEach(() => {
-    localStorage.clear()
+    try { localStorage.clear() } catch { /* jsdom fallback */ }
   })
   afterEach(() => {
     vi.unstubAllGlobals()
