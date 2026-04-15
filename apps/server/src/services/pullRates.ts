@@ -6,7 +6,9 @@ import type Database from 'better-sqlite3'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export function seedPullRates(db: Database.Database) {
-  const raw = fs.readFileSync(path.join(__dirname, '../data/pull-rate-seed.json'), 'utf8')
+  const seedPath = path.join(__dirname, '../data/pull-rate-seed.json')
+  if (!fs.existsSync(seedPath)) return
+  const raw = fs.readFileSync(seedPath, 'utf8')
   const data = JSON.parse(raw) as Record<
     string,
     Record<string, { denominator: number; cards_in_slot: number }>
