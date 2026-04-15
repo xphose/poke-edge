@@ -1,0 +1,13 @@
+{
+  "sv1": { "Special Illustration Rare": { "denominator": 120, "cards_in_slot": 5 }, "Illustration Rare": { "denominator": 45, "cards_in_slot": 8 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 15 } },
+  "sv3": { "Special Illustration Rare": { "denominator": 130, "cards_in_slot": 6 }, "Illustration Rare": { "denominator": 48, "cards_in_slot": 9 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 16 } },
+  "sv3pt5": { "Special Illustration Rare": { "denominator": 90, "cards_in_slot": 8 }, "Illustration Rare": { "denominator": 36, "cards_in_slot": 10 }, "Ultra Rare": { "denominator": 10, "cards_in_slot": 18 } },
+  "sv4": { "Special Illustration Rare": { "denominator": 140, "cards_in_slot": 6 }, "Illustration Rare": { "denominator": 50, "cards_in_slot": 9 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 16 } },
+  "sv4pt5": { "Special Illustration Rare": { "denominator": 85, "cards_in_slot": 10 }, "Illustration Rare": { "denominator": 40, "cards_in_slot": 11 }, "Ultra Rare": { "denominator": 10, "cards_in_slot": 18 } },
+  "sv6": { "Special Illustration Rare": { "denominator": 135, "cards_in_slot": 6 }, "Illustration Rare": { "denominator": 48, "cards_in_slot": 9 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 16 } },
+  "sv6pt5": { "Special Illustration Rare": { "denominator": 70, "cards_in_slot": 8 }, "Illustration Rare": { "denominator": 32, "cards_in_slot": 10 }, "Ultra Rare": { "denominator": 10, "cards_in_slot": 16 } },
+  "sv7": { "Special Illustration Rare": { "denominator": 130, "cards_in_slot": 6 }, "Illustration Rare": { "denominator": 46, "cards_in_slot": 9 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 16 } },
+  "sv8": { "Special Illustration Rare": { "denominator": 125, "cards_in_slot": 6 }, "Illustration Rare": { "denominator": 46, "cards_in_slot": 9 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 16 } },
+  "sv8pt5": { "Special Illustration Rare": { "denominator": 45, "cards_in_slot": 14 }, "Illustration Rare": { "denominator": 28, "cards_in_slot": 12 }, "Ultra Rare": { "denominator": 8, "cards_in_slot": 20 } },
+  "sv10": { "Special Illustration Rare": { "denominator": 128, "cards_in_slot": 6 }, "Illustration Rare": { "denominator": 46, "cards_in_slot": 9 }, "Ultra Rare": { "denominator": 12, "cards_in_slot": 16 } }
+}

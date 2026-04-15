@@ -41,6 +41,7 @@ RUN npm ci --omit=dev
 
 COPY --from=server-build /app/apps/server/dist apps/server/dist
 COPY --from=server-build /app/apps/server/src/db/migrations apps/server/dist/db/migrations
+COPY --from=server-build /app/apps/server/src/data apps/server/dist/data
 COPY --from=web-build /app/apps/web/dist apps/web/dist
 
 COPY ecosystem.config.cjs .

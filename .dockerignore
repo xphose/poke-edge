@@ -3,7 +3,7 @@ node_modules
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
-data/
+/data/
 dist/
 .env
 .env.local
