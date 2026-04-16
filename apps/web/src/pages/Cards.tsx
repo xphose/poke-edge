@@ -766,6 +766,7 @@ export function Cards() {
                       order={order}
                       onSort={onSortHeader}
                       title="Internal heuristic, blended toward same set + rarity tier median. Not a price guide."
+                      extra={<HelpButton sectionId="cards-model-fair" />}
                     />
                   )}
                   {show('predicted') && showAdjusted && (
@@ -1291,6 +1292,7 @@ function SortHead({
   order,
   onSort,
   title,
+  extra,
 }: {
   label: string
   col: SortKey
@@ -1299,6 +1301,7 @@ function SortHead({
   onSort: (k: SortKey) => void
   /** Native tooltip — short hint for column meaning */
   title?: string
+  extra?: React.ReactNode
 }) {
   const active = sort === col
   return (
@@ -1310,8 +1313,11 @@ function SortHead({
         onSort(col)
       }}
     >
-      {label}
-      {active ? (order === 'desc' ? ' \u2193' : ' \u2191') : ''}
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active ? (order === 'desc' ? ' \u2193' : ' \u2191') : ''}
+        {extra}
+      </span>
     </TableHead>
   )
 }

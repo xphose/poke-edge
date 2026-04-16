@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { HelpButton } from '@/components/help-center'
 import {
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip,
   Line,
@@ -272,7 +273,10 @@ function ModelStatusPanel() {
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold">Batch Models</h2>
+            <div className="flex items-center gap-1">
+              <h2 className="text-lg font-semibold">Batch Models</h2>
+              <HelpButton sectionId="analytics-overview" />
+            </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Pre-trained across the full card catalog. Run individually or all at once.
             </p>
@@ -444,7 +448,10 @@ function ModelStatusPanel() {
       {/* ── On-Demand Models ─────────────────────── */}
       <section className="space-y-4">
         <div>
-          <h2 className="text-lg font-semibold">On-Demand Models</h2>
+          <div className="flex items-center gap-1">
+            <h2 className="text-lg font-semibold">On-Demand Models</h2>
+            <HelpButton sectionId="analytics-overview" />
+          </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
             These models analyze a single card instantly. Search for a card below to run all three.
           </p>
@@ -709,7 +716,10 @@ function MomentumPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Momentum Watch</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">Momentum Watch</h2>
+        <HelpButton sectionId="analytics-momentum" />
+      </div>
       <p className="text-sm text-muted-foreground">Cards showing accelerating price patterns that historically precede significant moves.</p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {pageItems.map(card => (
@@ -759,7 +769,10 @@ function MarketIntelligencePanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">What Drives Pokemon Card Value?</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">What Drives Pokemon Card Value?</h2>
+        <HelpButton sectionId="analytics-insights" />
+      </div>
       <p className="text-sm text-muted-foreground">Global feature importance across {data.card_count.toLocaleString()} cards — which attributes best predict price.</p>
       <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
@@ -814,7 +827,10 @@ function AnomaliesPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Market Events</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">Market Events</h2>
+        <HelpButton sectionId="analytics-anomalies" />
+      </div>
       <p className="text-sm text-muted-foreground">Statistically significant price anomalies detected via z-score analysis.</p>
       <div className="divide-y divide-border rounded-lg border border-border bg-card">
         {pageItems.map((event, i) => (
@@ -865,7 +881,10 @@ function ClustersPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Portfolio by Archetype</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">Portfolio by Archetype</h2>
+        <HelpButton sectionId="analytics-clusters" />
+      </div>
       <p className="text-sm text-muted-foreground">Cards automatically segmented into behavioral archetypes using k-means clustering.</p>
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="h-72">
@@ -922,7 +941,10 @@ function SupplyPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Supply Warnings</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">Supply Warnings</h2>
+        <HelpButton sectionId="analytics-supply" />
+      </div>
       <p className="text-sm text-muted-foreground">Cards showing supply pressure that may suppress prices. Based on price trajectory, eBay spreads, and rarity signals.</p>
       <div className="divide-y divide-border rounded-lg border border-border bg-card">
         {pageItems.map(alert => (
@@ -978,7 +1000,10 @@ function CorrelationsPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Correlated Movers</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">Correlated Movers</h2>
+        <HelpButton sectionId="analytics-correlations" />
+      </div>
       <p className="text-sm text-muted-foreground">Card pairs that historically move together — if one spikes, the other tends to follow.</p>
       <div className="space-y-3">
         {pageItems.map((pair, i) => (
@@ -1041,7 +1066,10 @@ function PCAPanel() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Variance Explained</h2>
+      <div className="flex items-center gap-1">
+        <h2 className="text-lg font-semibold">Variance Explained</h2>
+        <HelpButton sectionId="analytics-pca" />
+      </div>
       <p className="text-sm text-muted-foreground">
         Principal Component Analysis across {data.card_count.toLocaleString()} cards and {data.feature_count} features.
         Total variance captured: {(data.total_variance_explained * 100).toFixed(1)}%.

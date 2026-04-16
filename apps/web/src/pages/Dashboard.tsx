@@ -405,7 +405,7 @@ export function Dashboard() {
   })
   const qCards = useQuery({
     queryKey: ['api', 'cards', 'dashboard'],
-    queryFn: () => api<CardsListResponse>('/api/cards?limit=25000&offset=0'),
+    queryFn: () => api<CardsListResponse>('/api/cards?limit=5000&offset=0&slim=1'),
     staleTime: 60_000,
   })
   // Pulse data is folded into social momentum via card-level reddit_buzz_score
@@ -437,13 +437,6 @@ export function Dashboard() {
   const upcoming = qUpcoming.data ?? []
   const meta = qMeta.data ?? null
   const ripSets = qSets.data ?? []
-
-  const loading =
-    qDash.isPending ||
-    qCards.isPending ||
-    qUpcoming.isPending ||
-    qMeta.isPending ||
-    qSets.isPending
 
   const error = qDash.error?.message ?? qCards.error?.message ?? null
 
@@ -678,19 +671,6 @@ export function Dashboard() {
     return `/cards?${cardsFiltersToSearchParams(base).toString()}`
   }
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <p className="text-muted-foreground">Loading dashboard…</p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-24 animate-pulse rounded-lg border border-border bg-muted/40" />
-          ))}
-        </div>
-      </div>
-    )
-  }
-
   if (error) {
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">
@@ -724,7 +704,7 @@ export function Dashboard() {
             variant="secondary"
             size="sm"
             onClick={reloadDashboardData}
-            disabled={loading}
+            disabled={qDash.isFetching}
           >
             Reload data
           </Button>
@@ -759,38 +739,51 @@ export function Dashboard() {
         ))}
       </nav>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiLink
-          to="/cards"
-          title="Total cards tracked"
-          value={kpis?.totalCards ?? '—'}
-          hint="Cards ingested from PokémonTCG.io — open full catalog"
-        />
-        <KpiLink
-          to="/signals"
-          title="Undervalued signals"
-          value={kpis?.undervaluedSignals ?? '—'}
-          hint="Cards flagged below model fair value — open buy signals"
-        />
-        <Kpi
-          title="Avg model R²"
-          value={kpis ? kpis.avgModelAccuracy.toFixed(2) : '—'}
-          hint="Calibration quality (target ~0.88)"
-        />
-        <KpiLink
-          to="/watchlist"
-          title="Portfolio value"
-          value={kpis ? `$${kpis.portfolioValue.toFixed(0)}` : '—'}
-          hint="Watchlist × latest market — manage holdings"
-        />
-      </div>
+      {qDash.isPending ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 animate-pulse rounded-lg border border-border bg-muted/40" />
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <KpiLink
+              to="/cards"
+              title="Total cards tracked"
+              value={kpis?.totalCards ?? '—'}
+              hint="Cards ingested from PokémonTCG.io — open full catalog"
+            />
+            <KpiLink
+              to="/signals"
+              title="Undervalued signals"
+              value={kpis?.undervaluedSignals ?? '—'}
+              hint="Cards flagged below model fair value — open buy signals"
+            />
+            <Kpi
+              title="Avg model R²"
+              value={kpis ? kpis.avgModelAccuracy.toFixed(2) : '—'}
+              hint="Calibration quality (target ~0.88)"
+            />
+            <KpiLink
+              to="/watchlist"
+              title="Portfolio value"
+              value={kpis ? `$${kpis.portfolioValue.toFixed(0)}` : '—'}
+              hint="Watchlist × latest market — manage holdings"
+            />
+          </div>
 
-      <DashboardWhyPanel
-        undervaluedCount={kpis?.undervaluedSignals ?? 0}
-        totalCards={kpis?.totalCards ?? 0}
-        ripOutlook={ripOutlook}
-      />
+          <DashboardWhyPanel
+            undervaluedCount={kpis?.undervaluedSignals ?? 0}
+            totalCards={kpis?.totalCards ?? 0}
+            ripOutlook={ripOutlook}
+          />
+        </>
+      )}
 
+      {qCards.isPending || qMeta.isPending ? (
+        <div className="h-[460px] animate-pulse rounded-xl border border-border bg-muted/40" />
+      ) : (
       <div className="grid gap-3 sm:gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader className="space-y-1">
@@ -1246,8 +1239,12 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
+        {qCards.isPending ? (
+          <div className="h-48 animate-pulse rounded-xl border border-border bg-muted/40" />
+        ) : (
         <Card>
           <CardHeader>
             <div className="flex items-center gap-1">
@@ -1290,7 +1287,11 @@ export function Dashboard() {
             </Link>
           </CardContent>
         </Card>
+        )}
 
+        {qUpcoming.isPending ? (
+          <div className="h-48 animate-pulse rounded-xl border border-border bg-muted/40" />
+        ) : (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div className="flex items-center gap-1">
@@ -1318,8 +1319,15 @@ export function Dashboard() {
             </ul>
           </CardContent>
         </Card>
+        )}
       </div>
 
+      {qCards.isPending ? (
+        <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
+          <div className="h-64 animate-pulse rounded-xl border border-border bg-muted/40" />
+          <div className="h-64 animate-pulse rounded-xl border border-border bg-muted/40" />
+        </div>
+      ) : (
       <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
@@ -1329,9 +1337,16 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
+            {movers.length > 0 && (
+              <div className="flex items-center justify-between px-1.5 text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground">
+                <span>Name</span>
+                <span>Momentum</span>
+              </div>
+            )}
             <div className="space-y-1.5">
               {movers.map((m) => {
                 const pct = maxMomentum > 0 ? Math.min(100, Math.round((m.momentumScore / maxMomentum) * 100)) : 0
+                const score = Math.round(m.momentumScore * 100)
                 const fair = m.predictedPrice ?? 0
                 const mkt = m.marketPrice ?? 0
                 const gap = fair > 0 && mkt > 0 ? ((fair - mkt) / fair) * 100 : 0
@@ -1344,6 +1359,7 @@ export function Dashboard() {
                       order: 'desc',
                     })}
                     className="group flex items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-muted"
+                    title={`Momentum ${score}/100 — blends Reddit buzz and Google Trends. Bar shows relative strength vs. top card in this list.`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-baseline justify-between gap-1">
@@ -1356,14 +1372,14 @@ export function Dashboard() {
                         </span>
                       </div>
                       <div className="mt-0.5 flex items-center gap-2">
-                        <div className="h-1 flex-1 rounded-full bg-muted">
+                        <div className="h-1.5 flex-1 rounded-full bg-muted">
                           <div
-                            className="h-1 rounded-full bg-primary/70 transition-all"
+                            className="h-1.5 rounded-full bg-primary/70 transition-all"
                             style={{ width: `${pct}%` }}
                           />
                         </div>
-                        <span className="w-10 text-right text-[0.65rem] tabular-nums text-muted-foreground">
-                          M{Math.round(m.momentumScore * 100)}
+                        <span className="w-12 text-right text-[0.65rem] tabular-nums text-muted-foreground">
+                          {score}/100
                         </span>
                       </div>
                     </div>
@@ -1377,7 +1393,7 @@ export function Dashboard() {
               )}
             </div>
             <p className="text-[0.65rem] text-muted-foreground">
-              Momentum score combines Reddit buzz with trends coverage. Deduplicated by character.
+              Momentum score (0–100) blends Reddit buzz and Google Trends. Bar shows relative strength vs. top card. Deduplicated by character.
             </p>
           </CardContent>
         </Card>
@@ -1402,6 +1418,7 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
   )
 }

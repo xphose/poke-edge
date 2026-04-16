@@ -10,7 +10,6 @@ const SUBS = [
   'PokemonTCGDeals',
 ]
 
-/** Extract the character/pokémon name from a full card name like "Umbreon VMAX" → "umbreon" */
 function extractCharacterName(fullName: string): string | null {
   const cleaned = fullName
     .replace(/\b(ex|EX|GX|gx|VMAX|VSTAR|V|vmax|vstar)\b/g, '')
@@ -27,7 +26,6 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
     character_name: string | null
   }[]
 
-  // Build lookup structures for both full names and character names
   const charToCards = new Map<string, { id: string; name: string }[]>()
   for (const c of cards) {
     const charName = c.character_name?.toLowerCase() || extractCharacterName(c.name)
@@ -39,24 +37,36 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
   }
 
   const mentions = new Map<string, number>()
+  let totalPosts = 0
+  let subsOk = 0
+  let subsFailed = 0
 
   for (const sub of SUBS) {
     const url = `https://www.reddit.com/r/${sub}/new.json?limit=100`
     try {
       const res = await fetchWithRetry(url, {
-        headers: { 'User-Agent': 'PokeGrails/1.0 (local research)' },
+        headers: {
+          'User-Agent': 'PokeGrails/1.0 (local research)',
+          'Accept': 'application/json',
+        },
       })
-      if (!res.ok) continue
+      if (!res.ok) {
+        console.warn(`[reddit] r/${sub} returned ${res.status}`)
+        subsFailed++
+        continue
+      }
+      subsOk++
       const data = (await res.json()) as {
         data?: { children?: { data?: { title?: string; selftext?: string } }[] }
       }
       const children = data.data?.children ?? []
+      totalPosts += children.length
+
       for (const ch of children) {
         const title = (ch.data?.title ?? '').toLowerCase()
         const body = (ch.data?.selftext ?? '').toLowerCase()
         const text = `${title} ${body}`
 
-        // Exact full-name match (high confidence)
         for (const c of cards) {
           const needle = c.name.toLowerCase()
           if (needle.length < 4) continue
@@ -66,7 +76,6 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
           mentions.set(c.id, (mentions.get(c.id) ?? 0) + titleHit + bodyHit)
         }
 
-        // Character-name match (broader coverage, lower weight)
         for (const [charName, cardList] of charToCards) {
           if (!text.includes(charName)) continue
           const inTitle = title.includes(charName)
@@ -76,13 +85,19 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
           }
         }
       }
-    } catch {
-      /* ignore */
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.warn(`[reddit] r/${sub} fetch failed: ${msg}`)
+      subsFailed++
     }
   }
 
-  // Blend new mentions with existing scores (exponential decay keeps history relevant)
-  const DECAY = 0.7
+  if (subsFailed === SUBS.length) {
+    console.warn(`[reddit] All ${SUBS.length} subs failed — likely rate-limited. Skipping score decay.`)
+    return { matched: 0, totalCards: cards.length }
+  }
+
+  const DECAY = 0.85
   const read = db.prepare(`SELECT reddit_buzz_score FROM cards WHERE id = ?`)
   const upd = db.prepare(`UPDATE cards SET reddit_buzz_score = ? WHERE id = ?`)
   const tx = db.transaction(() => {
@@ -95,7 +110,13 @@ export async function pollRedditAndScoreBuzz(db: Database.Database) {
   })
   tx()
 
-  return { matched: mentions.size, totalCards: cards.length }
+  const uniqueCards = mentions.size
+  console.log(
+    `[reddit] Polled ${subsOk}/${SUBS.length} subs, ${totalPosts} posts scanned, ` +
+    `${[...mentions.values()].reduce((a, b) => a + b, 0).toFixed(0)} mentions across ${uniqueCards} cards`,
+  )
+
+  return { matched: uniqueCards, totalCards: cards.length }
 }
 
 export async function pollRedditOptimized(db: Database.Database) {

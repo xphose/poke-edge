@@ -194,6 +194,13 @@ export function createApp(db: Database) {
   })
 
   app.get('/api/cards', optionalAuth, (req, res) => {
+    const cacheKey = `GET:${req.originalUrl}:tier=${isFreeUser(req) ? 'free' : 'full'}`
+    const hit = cacheGet(cacheKey)
+    if (hit) {
+      res.setHeader('Cache-Control', 'private, max-age=10')
+      return res.type('json').send(hit)
+    }
+
     const f = parseCardsListFilters(req.query)
     const limitRaw = parseInt(String(req.query.limit ?? '100'), 10)
     const limit = Number.isFinite(limitRaw) ? Math.min(5000, Math.max(1, limitRaw)) : 100
@@ -208,7 +215,13 @@ export function createApp(db: Database) {
     const countRow = db.prepare(`SELECT COUNT(*) as c ${baseWhere}`).get(...f.params, ...tierParams) as { c: number }
     const total = countRow.c
 
-    const sql = `SELECT * ${baseWhere}${orderByClause(f)} LIMIT ? OFFSET ?`
+    const slim = String(req.query.slim ?? '') === '1'
+    const selectCols = slim
+      ? `SELECT id, name, set_id, rarity, image_url, pull_cost_score, desirability_score,
+         predicted_price, market_price, valuation_flag, reddit_buzz_score, trends_score,
+         future_value_12m, annual_growth_rate`
+      : 'SELECT *'
+    const sql = `${selectCols} ${baseWhere}${orderByClause(f)} LIMIT ? OFFSET ?`
     const rows = db.prepare(sql).all(...f.params, ...tierParams, limit, offset) as {
       id: string
       name: string
@@ -225,7 +238,7 @@ export function createApp(db: Database) {
       [k: string]: unknown
     }[]
     const cardIds = rows.map((r) => r.id).filter(Boolean)
-    const sparkByCard = getSparklineMap(db, cardIds)
+    const sparkByCard = slim ? null : getSparklineMap(db, cardIds)
     const enriched = rows.map((r) => {
       const score = computeAiScore({
         ...r,
@@ -235,18 +248,20 @@ export function createApp(db: Database) {
         ...r,
         ai_score: Number(score.toFixed(4)),
         ai_decision: aiDecision(score),
-        spark_30d: sparkByCard.get(r.id) ?? [],
+        ...(sparkByCard ? { spark_30d: sparkByCard.get(r.id) ?? [] } : {}),
       }
     })
 
-    res.setHeader('Cache-Control', 'no-store')
-    res.json({
+    const body = {
       items: enriched,
       total,
       limit,
       offset,
       tier_limited: !!tier,
-    })
+    }
+    cacheSet(cacheKey, body, 15_000)
+    res.setHeader('Cache-Control', 'private, max-age=10')
+    res.json(body)
   })
 
   app.get('/api/cards/:id/buy-links', (req, res) => {
