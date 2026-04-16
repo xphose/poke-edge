@@ -93,7 +93,7 @@ export function findCointegrationPairs(
     : sampleStratified(eligibleIds, 120, db)
 
   const pairIds = cardId
-    ? eligibleIds.filter(id => id !== cardId)
+    ? sampleStratified(eligibleIds.filter(id => id !== cardId), 200, db)
     : cardIds
 
   const pairs: CointegrationPair[] = []

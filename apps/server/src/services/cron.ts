@@ -16,6 +16,8 @@ import { detectMomentumCards } from './analytics/momentum.js'
 import { detectSupplyShocks } from './analytics/supplyShock.js'
 import { detectAnomalies } from './analytics/anomaly.js'
 import { findCointegrationPairs } from './analytics/cointegration.js'
+import { invalidateAllPriceHistoryCache } from './analytics/shared.js'
+import { cacheInvalidateAll } from '../cache.js'
 
 let refreshing = false
 export function setRefreshing(v: boolean) { refreshing = v }
@@ -70,5 +72,7 @@ export async function fullRefresh(db: Database.Database) {
   takePredictionSnapshot(db)
   await refreshSealedPrices(db).catch(() => {})
   refreshSetMetrics(db)
+  invalidateAllPriceHistoryCache()
+  cacheInvalidateAll()
   runAnalyticsModels(db)
 }

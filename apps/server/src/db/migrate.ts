@@ -91,4 +91,7 @@ export function runMigrations(db: Database.Database) {
   )`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_snapshots_date ON prediction_snapshots(snapshot_date)`)
   db.exec(`CREATE INDEX IF NOT EXISTS idx_snapshots_flag ON prediction_snapshots(valuation_flag)`)
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp)`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_price_history_card_ts ON price_history(card_id, timestamp)`)
 }

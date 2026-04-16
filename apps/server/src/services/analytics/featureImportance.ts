@@ -23,9 +23,13 @@ const INTERPRETATIONS: Record<string, string> = {
   price_momentum_30d: 'Recent price trajectory often persists in the short term',
 }
 
-let cachedResult: FeatureImportanceResult | null = null
+let cachedResult: FeatureImportanceResult & { expiresAt: number } | null = null
+const FEATURE_IMPORTANCE_TTL = 600_000
 
 export function computeFeatureImportance(db: Database.Database): FeatureImportanceResult {
+  if (cachedResult && Date.now() < cachedResult.expiresAt) {
+    return cachedResult
+  }
   recordModelRun('random-forest')
   const cards = loadCardFeatures(db)
   if (cards.length < 10) {
@@ -76,6 +80,7 @@ export function computeFeatureImportance(db: Database.Database): FeatureImportan
     features,
     trained_at: new Date().toISOString(),
     card_count: cards.length,
+    expiresAt: Date.now() + FEATURE_IMPORTANCE_TTL,
   }
   return cachedResult
 }

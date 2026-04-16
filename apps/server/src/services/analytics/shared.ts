@@ -21,8 +21,15 @@ export type CardFeatureRow = {
   set_release_date: string | null
 }
 
+let cardFeaturesCache: { data: CardFeatureRow[]; expiresAt: number } | null = null
+const CARD_FEATURES_TTL = 300_000
+
 export function loadCardFeatures(db: Database.Database): CardFeatureRow[] {
-  return db.prepare(`
+  const now = Date.now()
+  if (cardFeaturesCache && now < cardFeaturesCache.expiresAt) {
+    return cardFeaturesCache.data
+  }
+  const data = db.prepare(`
     SELECT c.id, c.name, c.set_id, c.rarity, c.card_type, c.character_name,
            c.market_price, c.predicted_price, c.pull_cost_score, c.desirability_score,
            c.reddit_buzz_score, c.trends_score, c.ebay_median,
@@ -33,6 +40,8 @@ export function loadCardFeatures(db: Database.Database): CardFeatureRow[] {
     LEFT JOIN sets s ON s.id = c.set_id
     WHERE c.market_price IS NOT NULL AND c.market_price > 0
   `).all() as CardFeatureRow[]
+  cardFeaturesCache = { data, expiresAt: now + CARD_FEATURES_TTL }
+  return data
 }
 
 export type PricePoint = { timestamp: string; price: number }
@@ -64,25 +73,41 @@ export function loadPriceHistory(db: Database.Database, cardId: string): PricePo
   return deduplicateDaily(rows)
 }
 
-export function loadAllPriceHistory(db: Database.Database): Map<string, PricePoint[]> {
+let allPriceHistoryCache: { data: Map<string, PricePoint[]>; expiresAt: number } | null = null
+const ALL_PRICE_HISTORY_TTL = 300_000
+
+export function invalidateAllPriceHistoryCache(): void {
+  allPriceHistoryCache = null
+}
+
+export function loadAllPriceHistory(db: Database.Database, maxDays = 180): Map<string, PricePoint[]> {
+  const now = Date.now()
+  if (allPriceHistoryCache && now < allPriceHistoryCache.expiresAt) {
+    return allPriceHistoryCache.data
+  }
+
+  const cutoff = new Date(now - maxDays * 86_400_000).toISOString()
   const rows = db.prepare(`
     SELECT card_id, timestamp, COALESCE(pricecharting_median, tcgplayer_market) AS price
     FROM price_history
-    WHERE pricecharting_median IS NOT NULL OR tcgplayer_market IS NOT NULL
+    WHERE (pricecharting_median IS NOT NULL OR tcgplayer_market IS NOT NULL)
+      AND timestamp >= ?
     ORDER BY card_id, timestamp ASC
-  `).all() as (PricePoint & { card_id: string })[]
+  `).all(cutoff) as (PricePoint & { card_id: string })[]
 
   const rawByCard = new Map<string, PricePoint[]>()
   for (const r of rows) {
-    const arr = rawByCard.get(r.card_id) ?? []
+    let arr = rawByCard.get(r.card_id)
+    if (!arr) { arr = []; rawByCard.set(r.card_id, arr) }
     arr.push({ timestamp: r.timestamp, price: r.price })
-    rawByCard.set(r.card_id, arr)
   }
 
   const map = new Map<string, PricePoint[]>()
   for (const [cardId, raw] of rawByCard) {
     map.set(cardId, deduplicateDaily(raw))
   }
+
+  allPriceHistoryCache = { data: map, expiresAt: now + ALL_PRICE_HISTORY_TTL }
   return map
 }
 

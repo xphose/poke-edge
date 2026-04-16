@@ -30,30 +30,40 @@ type TrainedModel = {
 
 let cachedModel: TrainedModel | null = null
 
-function bestStump(features: number[][], residuals: number[], featureCount: number): TreeStump {
-  let bestLoss = Infinity
-  let best: TreeStump = { featureIdx: 0, threshold: 0, leftVal: 0, rightVal: 0 }
-
+function precomputeThresholds(features: number[][], featureCount: number): number[][] {
+  const result: number[][] = []
   for (let f = 0; f < featureCount; f++) {
     const vals = [...new Set(features.map(r => r[f]))].sort((a, b) => a - b)
-    const thresholds = vals.length > 20
+    result.push(vals.length > 20
       ? vals.filter((_, i) => i % Math.ceil(vals.length / 20) === 0)
-      : vals
+      : vals)
+  }
+  return result
+}
+
+function bestStump(features: number[][], residuals: number[], featureCount: number, thresholdsPerFeature: number[][]): TreeStump {
+  let bestLoss = Infinity
+  let best: TreeStump = { featureIdx: 0, threshold: 0, leftVal: 0, rightVal: 0 }
+  const n = features.length
+
+  for (let f = 0; f < featureCount; f++) {
+    const thresholds = thresholdsPerFeature[f]
 
     for (const t of thresholds) {
-      const leftRes: number[] = []
-      const rightRes: number[] = []
-      for (let i = 0; i < features.length; i++) {
-        if (features[i][f] <= t) leftRes.push(residuals[i])
-        else rightRes.push(residuals[i])
+      let leftSum = 0, leftCount = 0, rightSum = 0, rightCount = 0
+      for (let i = 0; i < n; i++) {
+        if (features[i][f] <= t) { leftSum += residuals[i]; leftCount++ }
+        else { rightSum += residuals[i]; rightCount++ }
       }
-      if (!leftRes.length || !rightRes.length) continue
+      if (!leftCount || !rightCount) continue
 
-      const lm = mean(leftRes)
-      const rm = mean(rightRes)
+      const lm = leftSum / leftCount
+      const rm = rightSum / rightCount
       let loss = 0
-      for (const r of leftRes) loss += (r - lm) ** 2
-      for (const r of rightRes) loss += (r - rm) ** 2
+      for (let i = 0; i < n; i++) {
+        const diff = residuals[i] - (features[i][f] <= t ? lm : rm)
+        loss += diff * diff
+      }
 
       if (loss < bestLoss) {
         bestLoss = loss
@@ -101,9 +111,10 @@ export function trainGradientBoostModel(db: Database.Database): TrainedModel {
   const lr = 0.15
   const stumps: TreeStump[] = []
   const importanceAccum = new Array(featureLabels.length).fill(0)
+  const thresholdsPerFeature = precomputeThresholds(features, featureLabels.length)
 
   for (let round = 0; round < numRounds; round++) {
-    const stump = bestStump(features, residuals, featureLabels.length)
+    const stump = bestStump(features, residuals, featureLabels.length, thresholdsPerFeature)
     stumps.push(stump)
     importanceAccum[stump.featureIdx] += 1
 

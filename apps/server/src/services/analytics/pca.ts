@@ -96,9 +96,13 @@ function powerIteration(
   return { eigenvalues, eigenvectors }
 }
 
-let cachedResult: PCAResult | null = null
+let cachedResult: PCAResult & { expiresAt: number } | null = null
+const PCA_TTL = 600_000
 
 export function computePCA(db: Database.Database): PCAResult {
+  if (cachedResult && Date.now() < cachedResult.expiresAt) {
+    return cachedResult
+  }
   recordModelRun('pca')
   const cards = loadCardFeatures(db)
 
@@ -165,6 +169,7 @@ export function computePCA(db: Database.Database): PCAResult {
     card_count: cards.length,
     feature_count: dim,
     computed_at: new Date().toISOString(),
+    expiresAt: Date.now() + PCA_TTL,
   }
   return cachedResult
 }

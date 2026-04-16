@@ -123,20 +123,53 @@ function silhouetteScore(data: number[][], assignments: number[], k: number): nu
   const n = data.length
   if (n < 2 || k < 2) return 0
 
+  const clusterIndices: number[][] = Array.from({ length: k }, () => [])
+  for (let i = 0; i < n; i++) clusterIndices[assignments[i]].push(i)
+
+  const clusterCentroids: number[][] = clusterIndices.map(indices => {
+    if (!indices.length) return data[0].map(() => 0)
+    const dim = data[0].length
+    const centroid = new Array(dim).fill(0)
+    for (const idx of indices) {
+      for (let d = 0; d < dim; d++) centroid[d] += data[idx][d]
+    }
+    for (let d = 0; d < dim; d++) centroid[d] /= indices.length
+    return centroid
+  })
+
+  const SAMPLE_SIZE = Math.min(n, 500)
+  const sampleIndices: number[] = []
+  if (SAMPLE_SIZE >= n) {
+    for (let i = 0; i < n; i++) sampleIndices.push(i)
+  } else {
+    const step = n / SAMPLE_SIZE
+    for (let s = 0; s < SAMPLE_SIZE; s++) {
+      sampleIndices.push(Math.min(Math.floor(s * step), n - 1))
+    }
+  }
+
   let totalSil = 0
-  for (let i = 0; i < n; i++) {
+  for (const i of sampleIndices) {
     const ci = assignments[i]
-    const sameCluster = data.filter((_, j) => j !== i && assignments[j] === ci)
-    const a = sameCluster.length > 0
-      ? mean(sameCluster.map(p => Math.sqrt(p.reduce((s, v, d) => s + (v - data[i][d]) ** 2, 0))))
-      : 0
+    const myCluster = clusterIndices[ci]
+    let a = 0
+    if (myCluster.length > 1) {
+      let sumDist = 0
+      for (const j of myCluster) {
+        if (j === i) continue
+        let dist = 0
+        for (let d = 0; d < data[0].length; d++) dist += (data[i][d] - data[j][d]) ** 2
+        sumDist += Math.sqrt(dist)
+      }
+      a = sumDist / (myCluster.length - 1)
+    }
 
     let minB = Infinity
     for (let c = 0; c < k; c++) {
-      if (c === ci) continue
-      const otherCluster = data.filter((_, j) => assignments[j] === c)
-      if (otherCluster.length === 0) continue
-      const b = mean(otherCluster.map(p => Math.sqrt(p.reduce((s, v, d) => s + (v - data[i][d]) ** 2, 0))))
+      if (c === ci || !clusterIndices[c].length) continue
+      let dist = 0
+      for (let d = 0; d < data[0].length; d++) dist += (data[i][d] - clusterCentroids[c][d]) ** 2
+      const b = Math.sqrt(dist)
       if (b < minB) minB = b
     }
 
@@ -144,7 +177,7 @@ function silhouetteScore(data: number[][], assignments: number[], k: number): nu
     totalSil += (minB - a) / Math.max(a, minB)
   }
 
-  return totalSil / n
+  return totalSil / sampleIndices.length
 }
 
 function assignArchetypes(centroids: number[][]): number[] {
@@ -190,19 +223,24 @@ function assignArchetypes(centroids: number[][]): number[] {
   return mapping
 }
 
-let cachedClusters: { assignments: ClusterAssignment[]; profiles: ClusterProfile[] } | null = null
+let cachedClusters: { assignments: ClusterAssignment[]; profiles: ClusterProfile[]; expiresAt: number } | null = null
+const CLUSTERING_TTL = 600_000
 
 export function runClustering(db: Database.Database): {
   assignments: ClusterAssignment[]
   profiles: ClusterProfile[]
 } {
+  if (cachedClusters && Date.now() < cachedClusters.expiresAt) {
+    return cachedClusters
+  }
   recordModelRun('clustering')
   const cards = loadCardFeatures(db)
   const historyMap = loadAllPriceHistory(db)
 
   if (cards.length < 10) {
-    cachedClusters = { assignments: [], profiles: [] }
-    return cachedClusters
+    const empty = { assignments: [] as ClusterAssignment[], profiles: [] as ClusterProfile[], expiresAt: Date.now() + CLUSTERING_TTL }
+    cachedClusters = empty
+    return empty
   }
 
   const vecs = buildClusterFeatures(cards, historyMap)
@@ -277,7 +315,7 @@ export function runClustering(db: Database.Database): {
     })
   }
 
-  cachedClusters = { assignments, profiles }
+  cachedClusters = { assignments, profiles, expiresAt: Date.now() + CLUSTERING_TTL }
   return cachedClusters
 }
 

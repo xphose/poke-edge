@@ -129,14 +129,53 @@ export function getTopSentiment(
   limit = 20,
 ): (SentimentResult & { card_id: string; name: string })[] {
   const cards = db.prepare(`
-    SELECT id, name FROM cards WHERE market_price IS NOT NULL AND market_price > 0 LIMIT 500
-  `).all() as { id: string; name: string }[]
+    SELECT c.id, c.name, c.rarity, c.card_type, c.character_name,
+           c.reddit_buzz_score, c.trends_score, c.desirability_score,
+           c.market_price, c.predicted_price, c.valuation_flag
+    FROM cards c WHERE c.market_price IS NOT NULL AND c.market_price > 0 LIMIT 500
+  `).all() as {
+    id: string; name: string; rarity: string | null; card_type: string | null
+    character_name: string | null; reddit_buzz_score: number | null
+    trends_score: number | null; desirability_score: number | null
+    market_price: number | null; predicted_price: number | null
+    valuation_flag: string | null
+  }[]
 
   const results: (SentimentResult & { card_id: string; name: string })[] = []
-  for (const c of cards) {
-    const r = analyzeCardSentiment(db, c.id)
-    if ('error' in r) continue
-    results.push({ ...r, card_id: c.id, name: c.name })
+  for (const card of cards) {
+    const breakdown: SentimentResult['breakdown'] = []
+    const allSignals: string[] = []
+
+    const nameText = [card.name, card.rarity, card.card_type, card.character_name].filter(Boolean).join(' ')
+    const { score: textScore, signals: textSignals } = textSentiment(nameText)
+    breakdown.push({ source: 'Card text analysis', score: textScore, detail: `${textSignals.length} keyword matches` })
+    allSignals.push(...textSignals)
+
+    const rarityKey = (card.rarity ?? '').toLowerCase()
+    let raritySentiment = 0
+    for (const [key, val] of Object.entries(RARITY_SENTIMENT)) {
+      if (rarityKey.includes(key)) { raritySentiment = val; break }
+    }
+    breakdown.push({ source: 'Rarity signal', score: raritySentiment, detail: card.rarity ?? 'unknown' })
+
+    const buzzNorm = Math.min(1, (card.reddit_buzz_score ?? 0) / 15)
+    const redditSentiment = buzzNorm > 0.3 ? buzzNorm * 0.8 : buzzNorm > 0.05 ? buzzNorm * 0.3 : -0.1
+    breakdown.push({ source: 'Reddit buzz', score: redditSentiment, detail: `Score: ${card.reddit_buzz_score ?? 0}` })
+
+    const trendsNorm = (card.trends_score ?? 5) / 10
+    const trendsSentiment = (trendsNorm - 0.5) * 1.2
+    breakdown.push({ source: 'Google Trends', score: trendsSentiment, detail: `Score: ${card.trends_score ?? 5}/10` })
+
+    const valuationSentiment = (card.valuation_flag ?? '').includes('UNDERVALUED') ? 0.5
+      : (card.valuation_flag ?? '').includes('OVERVALUED') ? -0.3 : 0
+    breakdown.push({ source: 'Valuation model', score: valuationSentiment, detail: card.valuation_flag ?? 'N/A' })
+
+    const composite = (textScore * 0.2 + raritySentiment * 0.25 + redditSentiment * 0.2 + trendsSentiment * 0.15 + valuationSentiment * 0.2)
+    const sentiment_score = Math.max(-1, Math.min(1, Math.round(composite * 1000) / 1000))
+    const label: SentimentResult['label'] =
+      sentiment_score > 0.15 ? 'positive' : sentiment_score < -0.15 ? 'negative' : 'neutral'
+
+    results.push({ sentiment_score, label, signals: allSignals, breakdown, card_id: card.id, name: card.name })
   }
 
   if (direction === 'positive') {
