@@ -80,7 +80,7 @@ export function invalidateAllPriceHistoryCache(): void {
   allPriceHistoryCache = null
 }
 
-export function loadAllPriceHistory(db: Database.Database, maxDays = 180): Map<string, PricePoint[]> {
+export function loadAllPriceHistory(db: Database.Database, maxDays = 90): Map<string, PricePoint[]> {
   const now = Date.now()
   if (allPriceHistoryCache && now < allPriceHistoryCache.expiresAt && maxDays <= allPriceHistoryCache.maxDays) {
     return allPriceHistoryCache.data

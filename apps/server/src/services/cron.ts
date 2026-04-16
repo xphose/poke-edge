@@ -19,7 +19,7 @@ import { findCointegrationPairs } from './analytics/cointegration.js'
 import { runClustering } from './analytics/clustering.js'
 import { computePCA } from './analytics/pca.js'
 import { getTopSentiment } from './analytics/sentiment.js'
-import { invalidateAllPriceHistoryCache, loadAllPriceHistory, loadCardFeatures } from './analytics/shared.js'
+import { invalidateAllPriceHistoryCache } from './analytics/shared.js'
 import { cacheInvalidateAll, cacheSet } from '../cache.js'
 import { saveModelResult } from '../modelStore.js'
 
@@ -92,13 +92,7 @@ export function hydrateFromDb(db: Database.Database) {
 }
 
 async function runAnalyticsModels(db: Database.Database) {
-  console.log('[analytics] Pre-warming shared data caches...')
-  const t0 = Date.now()
-  loadCardFeatures(db)
-  await yieldEventLoop()
-  loadAllPriceHistory(db)
-  await yieldEventLoop()
-  console.log(`[analytics] Shared caches warm in ${Date.now() - t0}ms`)
+  console.log('[analytics] Running analytics models...')
 
   const models: [string, () => unknown][] = [
     ['gradient-boost', () => trainGradientBoostModel(db)],
