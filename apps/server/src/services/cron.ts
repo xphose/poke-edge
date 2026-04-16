@@ -132,7 +132,11 @@ async function runAnalyticsModels(db: Database.Database) {
   }
 }
 
-export async function fullRefresh(db: Database.Database) {
+/**
+ * Ingest + model refresh without analytics recomputation.
+ * Safe for startup — analytics results are served from SQLite via hydrateFromDb.
+ */
+export async function dataRefresh(db: Database.Database) {
   seedSealedPrices(db)
   await ingestPokemonTcg(db)
   await yieldEventLoop()
@@ -144,7 +148,15 @@ export async function fullRefresh(db: Database.Database) {
   await refreshSealedPrices(db).catch(() => {})
   await yieldEventLoop()
   refreshSetMetrics(db)
-  invalidateAllPriceHistoryCache()
   cacheInvalidateAll()
+}
+
+/**
+ * Full refresh: data ingest + analytics model recomputation.
+ * Only called from the 4-hour cron schedule and admin manual trigger.
+ */
+export async function fullRefresh(db: Database.Database) {
+  await dataRefresh(db)
+  invalidateAllPriceHistoryCache()
   await runAnalyticsModels(db)
 }
