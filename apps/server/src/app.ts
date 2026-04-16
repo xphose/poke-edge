@@ -681,9 +681,9 @@ export function createApp(db: Database) {
     res.json(predictGradientBoost(db, String(req.params.cardId)))
   })
 
-  app.get('/api/models/random-forest/feature-importance', ...premiumAuth, cachedJson(300_000, () => computeFeatureImportance(db)))
+  app.get('/api/models/random-forest/feature-importance', ...premiumAuth, cachedJson(1_800_000, () => computeFeatureImportance(db)))
 
-  app.get('/api/models/momentum/cards', ...premiumAuth, cachedJson(120_000, (req) => {
+  app.get('/api/models/momentum/cards', ...premiumAuth, cachedJson(1_800_000, (req) => {
     const all = detectMomentumCards(db)
     const limit = clampInt(req.query.limit, 1, 100, 15)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
@@ -694,21 +694,21 @@ export function createApp(db: Database) {
     res.json(getCardMomentum(db, String(req.params.cardId)))
   })
 
-  app.get('/api/models/sentiment/top-positive', ...premiumAuth, cachedJson(120_000, () => getTopSentiment(db, 'positive')))
-  app.get('/api/models/sentiment/top-negative', ...premiumAuth, cachedJson(120_000, () => getTopSentiment(db, 'negative')))
+  app.get('/api/models/sentiment/top-positive', ...premiumAuth, cachedJson(1_800_000, () => getTopSentiment(db, 'positive')))
+  app.get('/api/models/sentiment/top-negative', ...premiumAuth, cachedJson(1_800_000, () => getTopSentiment(db, 'negative')))
 
   app.get('/api/models/sentiment/:cardId', ...premiumAuth, (req, res) => {
     res.json(analyzeCardSentiment(db, String(req.params.cardId)))
   })
 
-  app.get('/api/models/supply-shock/alerts', ...premiumAuth, cachedJson(300_000, (req) => {
+  app.get('/api/models/supply-shock/alerts', ...premiumAuth, cachedJson(1_800_000, (req) => {
     const all = detectSupplyShocks(db)
     const limit = clampInt(req.query.limit, 1, 100, 30)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
     return { items: all.slice(offset, offset + limit), total: all.length }
   }))
 
-  app.get('/api/models/anomalies/recent', ...premiumAuth, cachedJson(120_000, (req) => {
+  app.get('/api/models/anomalies/recent', ...premiumAuth, cachedJson(1_800_000, (req) => {
     const all = detectAnomalies(db, { days: 30 })
     const limit = clampInt(req.query.limit, 1, 100, 30)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
@@ -719,7 +719,7 @@ export function createApp(db: Database) {
     res.json(detectAnomalies(db, { cardId: String(req.params.cardId) }))
   })
 
-  app.get('/api/models/cointegration/pairs', ...premiumAuth, cachedJson(300_000, (req) => {
+  app.get('/api/models/cointegration/pairs', ...premiumAuth, cachedJson(1_800_000, (req) => {
     const all = findCointegrationPairs(db)
     const limit = clampInt(req.query.limit, 1, 100, 20)
     const offset = clampInt(req.query.offset, 0, all.length, 0)
@@ -734,7 +734,7 @@ export function createApp(db: Database) {
     res.json(bayesianEstimate(db, String(req.params.cardId)))
   })
 
-  app.get('/api/models/clusters/all', ...premiumAuth, cachedJson(300_000, () => {
+  app.get('/api/models/clusters/all', ...premiumAuth, cachedJson(1_800_000, () => {
     const { profiles } = runClustering(db)
     return { profiles }
   }))
@@ -743,7 +743,7 @@ export function createApp(db: Database) {
     res.json(getCardCluster(db, String(req.params.cardId)))
   })
 
-  app.get('/api/models/pca/components', ...premiumAuth, cachedJson(300_000, () => computePCA(db)))
+  app.get('/api/models/pca/components', ...premiumAuth, cachedJson(1_800_000, () => computePCA(db)))
 
   app.get('/api/models/status', ...premiumAuth, (_req, res) => {
     const cacheKey = 'GET:/api/models/status'

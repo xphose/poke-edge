@@ -16,7 +16,9 @@ import { detectMomentumCards } from './analytics/momentum.js'
 import { detectSupplyShocks } from './analytics/supplyShock.js'
 import { detectAnomalies } from './analytics/anomaly.js'
 import { findCointegrationPairs } from './analytics/cointegration.js'
-import { invalidateAllPriceHistoryCache } from './analytics/shared.js'
+import { runClustering } from './analytics/clustering.js'
+import { computePCA } from './analytics/pca.js'
+import { invalidateAllPriceHistoryCache, loadAllPriceHistory, loadCardFeatures } from './analytics/shared.js'
 import { cacheInvalidateAll } from '../cache.js'
 
 let refreshing = false
@@ -51,6 +53,12 @@ export function startCronJobs(db: Database.Database) {
 }
 
 function runAnalyticsModels(db: Database.Database) {
+  console.log('[analytics] Pre-warming shared data caches...')
+  const t0 = Date.now()
+  loadCardFeatures(db)
+  loadAllPriceHistory(db)
+  console.log(`[analytics] Shared caches warm in ${Date.now() - t0}ms`)
+
   const models: [string, () => void][] = [
     ['gradient-boost', () => { trainGradientBoostModel(db) }],
     ['feature-importance', () => { computeFeatureImportance(db) }],
@@ -58,9 +66,15 @@ function runAnalyticsModels(db: Database.Database) {
     ['supply-shock', () => { detectSupplyShocks(db) }],
     ['anomaly', () => { detectAnomalies(db, { days: 30 }) }],
     ['cointegration', () => { findCointegrationPairs(db) }],
+    ['clustering', () => { runClustering(db) }],
+    ['pca', () => { computePCA(db) }],
   ]
   for (const [name, run] of models) {
-    try { run() } catch (e) { console.error(`[analytics] ${name}:`, e) }
+    const start = Date.now()
+    try {
+      run()
+      console.log(`[analytics] ${name} done in ${Date.now() - start}ms`)
+    } catch (e) { console.error(`[analytics] ${name}:`, e) }
   }
 }
 
