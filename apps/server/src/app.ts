@@ -40,6 +40,7 @@ import {
 } from './services/analytics/shared.js'
 import { loadModelResult } from './modelStore.js'
 import { authRoutes } from './routes/auth.js'
+import { canaryRoutes } from './routes/canary.js'
 import { stripeRoutes, stripeWebhookRoute } from './routes/stripe.js'
 import { authenticate, optionalAuth, requireAdmin, requireRole, isFreeUser, freeSetFilter, getFreeSetIds } from './middleware/auth.js'
 
@@ -87,6 +88,8 @@ export function createApp(db: Database) {
     const n = db.prepare(`SELECT COUNT(*) as c FROM cards`).get() as { c: number }
     res.json({ ok: true, cards: n.c })
   })
+
+  app.use(canaryRoutes(db))
 
   app.post('/api/internal/refresh', authenticate, requireAdmin, async (_req, res) => {
     const { fullRefresh } = await import('./services/cron.js')
