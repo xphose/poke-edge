@@ -5,23 +5,94 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - name: Preflight — verify deploy secrets
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
+          KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          missing=0
+          if [ -z "$HOST" ];     then echo "::error::SERVER_HOST secret is empty or missing";    missing=1; fi
+          if [ -z "$SSH_USER" ]; then echo "::error::SERVER_USER secret is empty or missing";    missing=1; fi
+          if [ -z "$KEY" ];      then echo "::error::SERVER_SSH_KEY secret is empty or missing"; missing=1; fi
+          [ "$missing" = "1" ] && exit 1
+          echo "host=$HOST (${#HOST} chars), user=$SSH_USER (${#SSH_USER} chars), key=${#KEY} chars"
+          first=$(printf '%s' "$KEY" | head -1)
+          last=$(printf '%s' "$KEY" | tail -1)
+          echo "key first line: $first"
+          echo "key last line:  $last"
+          case "$first" in
+            "-----BEGIN OPENSSH PRIVATE KEY-----"|"-----BEGIN RSA PRIVATE KEY-----"|"-----BEGIN EC PRIVATE KEY-----"|"-----BEGIN PRIVATE KEY-----")
+              echo "key format looks valid" ;;
+            *)
+              echo "::error::SERVER_SSH_KEY does not start with a recognized PEM header. Re-paste the key including the BEGIN/END lines."
+              exit 1 ;;
+          esac
+          case "$last" in
+            "-----END OPENSSH PRIVATE KEY-----"|"-----END RSA PRIVATE KEY-----"|"-----END EC PRIVATE KEY-----"|"-----END PRIVATE KEY-----")
+              echo "key trailer looks valid" ;;
+            *)
+              echo "::error::SERVER_SSH_KEY last line is unexpected ('$last'). The secret is likely missing the trailing newline or END marker."
+              exit 1 ;;
+          esac
 
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            cd /opt/pokegrails
-            git pull origin main
-            docker compose build --no-cache
-            docker compose up -d
-            echo "Deployed $(git rev-parse --short HEAD) at $(date)"
+      - name: Install SSH key
+        env:
+          HOST: ${{ secrets.SERVER_HOST }}
+          KEY:  ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null \
+            || { echo "::error::The private key could not be parsed (ssh-keygen rejected it). Re-export with 'ssh-keygen -p -m PEM -f <keyfile>' or re-add the original contents as-is."; exit 1; }
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "fingerprint of deploy key:"
+          ssh-keygen -lf ~/.ssh/id_deploy
+
+      - name: Deploy via SSH
+        env:
+          HOST:     ${{ secrets.SERVER_HOST }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=20 \
+              -o ServerAliveInterval=30 \
+              "$SSH_USER@$HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd /opt/pokegrails
+          git fetch --quiet origin main
+          git reset --hard origin/main
+          docker compose build app
+          docker compose up -d --force-recreate app
+          sleep 5
+          docker compose ps app
+          echo "Deployed $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"
+          REMOTE
+
+      - name: Post-deploy smoke test
+        run: |
+          set -e
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            http=$(curl -s -m 10 -o /dev/null -w '%{http_code}' https://pokegrails.com/api/health || true)
+            echo "attempt $i: HTTP $http"
+            [ "$http" = "200" ] && exit 0
+            sleep 6
+          done
+          echo "::error::Prod /api/health never returned 200 after deploy"
+          exit 1
