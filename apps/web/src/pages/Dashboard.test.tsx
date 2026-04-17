@@ -53,10 +53,10 @@ function mockDashboardApi(fixture: DashboardApiFixture) {
       avgModelAccuracy: 0.88,
       portfolioValue: 0,
     },
-    '/api/cards?limit=25000&offset=0': {
+    '/api/cards?limit=5000&offset=0&slim=1': {
       items: fixture.cards,
       total: fixture.cards.length,
-      limit: 2500,
+      limit: 5000,
       offset: 0,
     },
     '/api/upcoming': fixture.upcoming ?? [],
@@ -129,8 +129,8 @@ describe('Dashboard data tabs', () => {
     expect(screen.queryByText('Waiting for social signals (Reddit and trends)…')).not.toBeInTheDocument()
     expect(screen.getByText('Charizard ex')).toBeInTheDocument()
     expect(screen.getByText('Pikachu V')).toBeInTheDocument()
-    expect(screen.getByText('M63')).toBeInTheDocument()
-    expect(screen.getByText('M56')).toBeInTheDocument()
+    expect(screen.getByText('63/100')).toBeInTheDocument()
+    expect(screen.getByText('56/100')).toBeInTheDocument()
   })
 
   it('renders empty states for each chart tab when there is no data', async () => {

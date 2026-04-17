@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import request from 'supertest'
 import { createApp } from './app.js'
+import { cacheInvalidateAll } from './cache.js'
 import { openMemoryDb, seedMinimalCard, adminToken, premiumToken, freeToken } from './test/helpers.js'
 
 describe('createApp', () => {
@@ -8,6 +9,7 @@ describe('createApp', () => {
 
   beforeEach(() => {
     db = openMemoryDb()
+    cacheInvalidateAll()
   })
 
   it('GET /api/health returns ok with zero cards', async () => {
@@ -355,6 +357,10 @@ describe('Negotiation pricing', () => {
 })
 
 describe('30d sparkline / trend', () => {
+  beforeEach(() => {
+    cacheInvalidateAll()
+  })
+
   function seedPriceHistory(
     db: ReturnType<typeof openMemoryDb>,
     cardId: string,
