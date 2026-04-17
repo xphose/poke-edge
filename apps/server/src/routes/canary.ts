@@ -194,21 +194,32 @@ export function canaryRoutes(db: Database): Router {
       checks.push({ name: 'reddit_poll_freshness', status: 'skip', detail: String(e) })
     }
 
-    // 7) Process memory — report in MB. Warn at 700MB, fail at 1000MB
-    //    (matches PM2 max_memory_restart headroom)
+    // 7) Process memory — report in MB. Thresholds tuned against PM2's
+    //    max_memory_restart=1200M: warn at 900 (give us time to investigate
+    //    before PM2 kills), fail at 1100 (imminent restart).
+    //    Skip during the first 90s of uptime — the startup ingest + analytics
+    //    hydration briefly pushes RSS up, and V8 hasn't GC'd yet.
     try {
       const m = process.memoryUsage()
       const rssMb = Math.round(m.rss / MB)
       const heapMb = Math.round(m.heapUsed / MB)
+      const uptime = process.uptime()
       let status: CheckStatus = 'ok'
-      if (rssMb > 1000) status = 'fail'
-      else if (rssMb > 700) status = 'warn'
+      let detail = `rss ${rssMb}MB, heap ${heapMb}MB`
+      if (uptime < 90) {
+        status = 'skip'
+        detail = `skipped during warm-up (uptime ${Math.round(uptime)}s). ${detail}`
+      } else if (rssMb > 1100) {
+        status = 'fail'
+      } else if (rssMb > 900) {
+        status = 'warn'
+      }
       checks.push({
         name: 'process_memory',
         status,
         value: rssMb,
-        detail: `rss ${rssMb}MB, heap ${heapMb}MB`,
-        threshold: '700MB warn / 1000MB fail',
+        detail,
+        threshold: '900MB warn / 1100MB fail (vs PM2 restart at 1200MB)',
       })
     } catch (e) {
       checks.push({ name: 'process_memory', status: 'fail', detail: String(e) })
