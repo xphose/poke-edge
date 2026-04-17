@@ -38,4 +38,12 @@ export const config = {
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
   stripePriceIdMonthly: process.env.STRIPE_PRICE_ID_MONTHLY || '',
   stripePriceIdYearly: process.env.STRIPE_PRICE_ID_YEARLY || '',
+  // Explicit allowlist of emails that should be granted 'admin' on first signup.
+  // Comma-separated, case-insensitive. Empty by default — no signup path ever
+  // produces an admin account unless an operator opts in via this env var.
+  // Promoting an existing user still requires a direct DB update.
+  bootstrapAdminEmails: (process.env.BOOTSTRAP_ADMIN_EMAILS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0),
 }

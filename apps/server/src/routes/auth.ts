@@ -51,12 +51,16 @@ export function authRoutes(db: Database): Router {
       }
 
       const passwordHash = await bcrypt.hash(password, SALT_ROUNDS)
-      const isFirstUser = !(db.prepare('SELECT 1 FROM users LIMIT 1').get())
-      const role = isFirstUser ? 'admin' : 'free'
+      // Signups NEVER auto-promote to admin or premium. The only path to 'admin'
+      // at signup is an explicit operator-provided allowlist (BOOTSTRAP_ADMIN_EMAILS).
+      // Any other promotion must be done by an authenticated admin or via direct
+      // DB update. See apps/server/src/routes/auth.test.ts for the security invariants.
+      const normalizedEmail = email.toLowerCase()
+      const role: 'free' | 'admin' = config.bootstrapAdminEmails.includes(normalizedEmail) ? 'admin' : 'free'
 
       const result = db.prepare(
         'INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)'
-      ).run(username, email.toLowerCase(), passwordHash, role)
+      ).run(username, normalizedEmail, passwordHash, role)
 
       const userId = result.lastInsertRowid as number
       const payload: JwtPayload = { userId: Number(userId), username, role: role as any }
@@ -67,7 +71,7 @@ export function authRoutes(db: Database): Router {
       db.prepare('INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)').run(userId, tokenHash, expiresAt)
 
       res.status(201).json({
-        user: { id: Number(userId), username, email: email.toLowerCase(), role },
+        user: { id: Number(userId), username, email: normalizedEmail, role },
         accessToken,
         refreshToken,
       })
@@ -215,8 +219,9 @@ export function authRoutes(db: Database): Router {
           finalUsername = `${username.slice(0, 26)}_${suffix++}`
         }
 
-        const isFirstUser = !(db.prepare('SELECT 1 FROM users LIMIT 1').get())
-        const role = isFirstUser ? 'admin' : 'free'
+        // Same invariant as /register: Google signups never auto-promote.
+        // Only the BOOTSTRAP_ADMIN_EMAILS allowlist can grant admin at signup time.
+        const role: 'free' | 'admin' = config.bootstrapAdminEmails.includes(email) ? 'admin' : 'free'
         const dummyHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), SALT_ROUNDS)
 
         const result = db.prepare(
