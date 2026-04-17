@@ -244,6 +244,15 @@ export function canaryRoutes(db: Database): Router {
       ts: new Date().toISOString(),
       uptime_s: Math.round(process.uptime()),
       node_version: process.version,
+      // Surface the worker identity so Sentinel can detect if only one worker
+      // of the cluster is answering (PM2 load-balances round-robin). Over N
+      // polls, the watchdog should see every worker id at least once.
+      worker: {
+        pid: process.pid,
+        // NODE_APP_INSTANCE is set by PM2 in cluster mode (unset in fork mode).
+        instance: process.env.NODE_APP_INSTANCE ?? 'fork',
+        primary: process.env.NODE_APP_INSTANCE === undefined || process.env.NODE_APP_INSTANCE === '0',
+      },
       checks,
       summary: {
         ok: checks.filter(c => c.status === 'ok').length,

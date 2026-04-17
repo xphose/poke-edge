@@ -15,20 +15,37 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const db = getDb()
 configureWebPush()
 seedUpcomingSets(db)
-hydrateFromDb(db)
-startCronJobs(db)
 
-setImmediate(async () => {
-  setRefreshing(true)
-  try {
-    await dataRefresh(db)
-  } catch (e) {
-    console.error('Initial ingest failed', e)
-  } finally {
-    setRefreshing(false)
-  }
-  seedMissingPriceHistory(db)
-})
+// Every worker loads its own in-memory analytics cache from SQLite — cheap,
+// and required so any worker can answer requests instantly on cold start.
+hydrateFromDb(db)
+
+// Crons, the initial ingest, and the Reddit poller MUST run on exactly one
+// process, otherwise we'd double-write to external APIs, double-notify users,
+// and race on SQLite writes. In PM2 cluster mode each worker gets a unique
+// NODE_APP_INSTANCE ('0', '1', …); in fork mode the env var is undefined.
+// We elect worker 0 (or the single fork-mode process) as the "primary".
+const workerId = process.env.NODE_APP_INSTANCE
+const isPrimary = workerId === undefined || workerId === '0'
+
+if (isPrimary) {
+  console.log(`[primary] worker=${workerId ?? 'fork'} — enabling cron jobs + initial ingest`)
+  startCronJobs(db)
+
+  setImmediate(async () => {
+    setRefreshing(true)
+    try {
+      await dataRefresh(db)
+    } catch (e) {
+      console.error('Initial ingest failed', e)
+    } finally {
+      setRefreshing(false)
+    }
+    seedMissingPriceHistory(db)
+  })
+} else {
+  console.log(`[worker ${workerId}] HTTP-only — cron jobs + ingest handled by worker 0`)
+}
 
 const app = createApp(db)
 
