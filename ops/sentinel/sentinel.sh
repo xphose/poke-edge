@@ -60,7 +60,9 @@ record_event() {
   {
     echo "$line"
     [ -f "$SENTINEL_EVENTS_JSON" ] && head -n 199 "$SENTINEL_EVENTS_JSON"
-  } > "${SENTINEL_EVENTS_JSON}.tmp" && mv "${SENTINEL_EVENTS_JSON}.tmp" "$SENTINEL_EVENTS_JSON"
+    true  # ensure block exits 0 so the mv below runs on the very first event
+  } > "${SENTINEL_EVENTS_JSON}.tmp"
+  mv "${SENTINEL_EVENTS_JSON}.tmp" "$SENTINEL_EVENTS_JSON"
 }
 
 raise() {
