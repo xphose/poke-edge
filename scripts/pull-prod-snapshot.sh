@@ -67,8 +67,24 @@ trap 'rm -rf "$TMP"' EXIT
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 REMOTE_SNAPSHOT="/tmp/pokegrails-snapshot-$STAMP.sqlite"
 
-SSH="ssh -i $KEY -o BatchMode=yes -o ConnectTimeout=20 $USER@$HOST"
-SCP="scp -i $KEY -o BatchMode=yes -o ConnectTimeout=20"
+# First-time SSH ergonomics: if the host isn't in known_hosts yet, fetch
+# its public key once with ssh-keyscan and pin it. After that, strict host
+# key checking is on (so a MITM or swapped server would fail loudly).
+KNOWN_HOSTS="$HOME/.ssh/known_hosts"
+if ! ssh-keygen -F "$HOST" -f "$KNOWN_HOSTS" >/dev/null 2>&1; then
+  echo "[snapshot] first-time connection to $HOST — adding to known_hosts"
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  ssh-keyscan -t ed25519,rsa -T 10 "$HOST" >> "$KNOWN_HOSTS" 2>/dev/null || {
+    echo "[snapshot] ssh-keyscan failed — check that $HOST resolves and port 22 is open"
+    exit 1
+  }
+  echo "[snapshot] pinned host key for $HOST"
+fi
+
+SSH_OPTS="-i $KEY -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=yes"
+SSH="ssh $SSH_OPTS $USER@$HOST"
+SCP="scp $SSH_OPTS"
 
 echo "[snapshot] → $USER@$HOST: taking .backup snapshot (WAL-consistent)"
 $SSH bash -s <<REMOTE
