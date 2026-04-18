@@ -8,20 +8,43 @@ let lastRequest = 0
 
 // PriceCharting is fronted by Cloudflare, which intermittently serves a
 // "Just a moment..." 403 challenge regardless of User-Agent. A 2026-04-18
-// prod probe of `/api/product?id=6277151` showed ~33% 403 rate even with a
-// realistic Chrome UA (chrome-current run1=200, run2=403, run3=200). Without
-// retries, Phase 2a/3 of the backfill silently no-ops on every challenged
-// request — that's why the production DB had 0 `card_grade_history` rows
-// despite 5,712 cards being matched.
+// prod probe showed ~33% 403 rate even with a realistic Chrome UA. After
+// ~hours of repeated 403s the prod IP gets escalated to a hard, instant
+// 403 (≤ 100ms response) — at that point the IP is banned and the only
+// recovery is waiting it out (24-72h) or asking PC support to whitelist.
 //
-// Mitigation: send a browser-shaped UA (helps marginally) AND retry up to
-// twice on 403 with progressive backoff. With ~66% per-attempt success,
-// 3 attempts ≈ 96% effective success rate.
+// Mitigation:
+//   1. Send a browser-shaped UA (helps marginally vs `PokeGrails/1.0`)
+//   2. Retry on 403 with progressive backoff (≈ 66%/attempt → 96% w/ 3 tries)
+//   3. CIRCUIT BREAKER: if we see PC_BREAKER_THRESHOLD consecutive 403s in a
+//      single backfill, trip the breaker and short-circuit subsequent calls
+//      to avoid worsening the IP reputation.
 const PC_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 const PC_RETRY_DELAYS_MS = [3000, 6000] as const
+const PC_BREAKER_THRESHOLD = 10
+const PC_BREAKER_COOLDOWN_MS = 30 * 60 * 1000
+
+let consecutive403s = 0
+let breakerOpenUntil = 0
+
+function tripBreaker(): void {
+  breakerOpenUntil = Date.now() + PC_BREAKER_COOLDOWN_MS
+  console.log(
+    `[pc-backfill] CIRCUIT BREAKER TRIPPED — saw ${consecutive403s} consecutive 403s. ` +
+      `Cloudflare appears to have IP-blocked this host. Suppressing PC requests for ${PC_BREAKER_COOLDOWN_MS / 60000}m.`,
+  )
+}
+
+class PcCircuitOpenError extends Error {
+  constructor() {
+    super('pc-circuit-open')
+  }
+}
 
 async function throttledFetch(url: string, minGapMs = 1100): Promise<Response> {
+  if (Date.now() < breakerOpenUntil) throw new PcCircuitOpenError()
+
   let attempt = 0
   let resp: Response
   while (true) {
@@ -36,12 +59,21 @@ async function throttledFetch(url: string, minGapMs = 1100): Promise<Response> {
       },
       signal: AbortSignal.timeout(20_000),
     })
-    // Retry only on Cloudflare's challenge status. Other non-2xx (e.g. 404
-    // for an invalid product slug, 401 for a bad token) are real errors and
-    // shouldn't burn extra requests against the rate budget.
-    if (resp.status !== 403 || attempt >= PC_RETRY_DELAYS_MS.length) return resp
-    await sleep(PC_RETRY_DELAYS_MS[attempt])
-    attempt++
+    if (resp.status === 403) {
+      consecutive403s++
+      if (consecutive403s >= PC_BREAKER_THRESHOLD) {
+        tripBreaker()
+        throw new PcCircuitOpenError()
+      }
+      if (attempt < PC_RETRY_DELAYS_MS.length) {
+        await sleep(PC_RETRY_DELAYS_MS[attempt])
+        attempt++
+        continue
+      }
+      return resp
+    }
+    consecutive403s = 0
+    return resp
   }
 }
 
@@ -617,7 +649,11 @@ async function runPricechartingBackfillInner(
         card.pricecharting_id = result.pcId
         stats.cardsMatched++
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof PcCircuitOpenError) {
+        console.log(`[pc-backfill] Phase 1 aborted at ${i + 1}/${cards.length} — circuit open`)
+        break
+      }
       stats.errors++
     }
 
@@ -650,7 +686,11 @@ async function runPricechartingBackfillInner(
             card.id,
           )
         }
-      } catch {
+      } catch (e) {
+        if (e instanceof PcCircuitOpenError) {
+          console.log(`[pc-backfill] Phase 2a aborted at ${i + 1}/${needsMeta.length} — circuit open`)
+          break
+        }
         stats.errors++
       }
       if ((i + 1) % 50 === 0) {
@@ -690,7 +730,11 @@ async function runPricechartingBackfillInner(
         storeCardGradeHistory(db, card.id, chart)
         stats.cardsScraped++
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof PcCircuitOpenError) {
+        console.log(`[pc-backfill] Phase 3 aborted at ${i + 1}/${cardsWithMeta.length} — circuit open`)
+        break
+      }
       stats.errors++
     }
 
