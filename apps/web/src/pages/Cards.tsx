@@ -512,12 +512,18 @@ export function Cards() {
    */
   const fetchGradeHistory = async (cardId: string, grade: ChartGradeKey, source: ChartSourceKey) => {
     try {
-      const r = await api<{ grade: string; source: string; pointInTime: boolean; series: { timestamp: string; price: number }[] }>(
+      const r = await api<{ grade: string; source: string; pointInTime: boolean; series: { timestamp: string; price: number }[]; filtered?: number }>(
         `/api/cards/${cardId}/history?grade=${grade}&source=${source}`,
       )
+      // #region agent log
+      fetch('http://127.0.0.1:7308/ingest/ab1dabe4-139b-4e33-a5c9-bbead4ed210c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ba40ef'},body:JSON.stringify({sessionId:'ba40ef',runId:'post-fix',hypothesisId:'B',location:'Cards.tsx:fetchGradeHistory',message:'/history response',data:{cardId,grade,source,seriesLen:r.series.length,filtered:r.filtered,pointInTime:r.pointInTime,first:r.series[0]??null,last:r.series[r.series.length-1]??null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setGradeMeta({ pointInTime: !!r.pointInTime })
       setHist(r.series.map((p) => ({ timestamp: p.timestamp, tcgplayer_market: p.price })))
-    } catch {
+    } catch (e) {
+      // #region agent log
+      fetch('http://127.0.0.1:7308/ingest/ab1dabe4-139b-4e33-a5c9-bbead4ed210c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ba40ef'},body:JSON.stringify({sessionId:'ba40ef',runId:'post-fix',hypothesisId:'B',location:'Cards.tsx:fetchGradeHistory.error',message:'/history failed',data:{cardId,grade,source,error:String(e)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setGradeMeta(null)
       setHist([])
     }
@@ -1440,7 +1446,26 @@ export function Cards() {
                 </ResponsiveContainer>
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-1 px-4 text-center text-xs text-muted-foreground">
-                    {selectedSource === 'pricecharting' && selectedGrade === 'raw' ? (
+                    {/*
+                      Empty-state copy MUST distinguish 0 points (backfill
+                      genuinely missing) from 1 point (we have today's CSV
+                      snapshot but a line needs ≥2). Pre-fix the 1-point
+                      case rendered "Backfill hasn't run for this card"
+                      which lies — e.g. Mew ex sv4pt5-232 has 7 graded
+                      prices from the daily CSV ingest but the line chart
+                      still can't draw. Verified via runtime log
+                      Cards.tsx:emptyState on 2026-04-18.
+                    */}
+                    {chartData.length === 1 ? (
+                      <>
+                        <span className="font-medium text-foreground tabular-nums">
+                          Latest snapshot: ${chartData[0].p.toFixed(2)} ({chartData[0].label})
+                        </span>
+                        <span className="text-[0.65rem]">
+                          Only one data point so far — the line chart will populate as daily snapshots accumulate.
+                        </span>
+                      </>
+                    ) : selectedSource === 'pricecharting' && selectedGrade === 'raw' ? (
                       <>
                         <span>No PriceCharting history for this card yet.</span>
                         <span className="text-[0.65rem]">
