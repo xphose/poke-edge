@@ -3,6 +3,7 @@ import request from 'supertest'
 import { createApp } from '../app.js'
 import { openMemoryDb, seedMinimalCard } from '../test/helpers.js'
 import { cacheInvalidateAll } from '../cache.js'
+import { resetFreeSetIdsCacheForTests } from '../middleware/auth.js'
 
 const isoDay = (daysAgo: number) =>
   new Date(Date.now() - daysAgo * 86_400_000).toISOString().split('T')[0] + 'T00:00:00.000Z'
@@ -180,6 +181,98 @@ describe('GET /api/cards/:id/history?grade=...', () => {
     expect(r.status).toBe(200)
     expect(r.body.pointInTime).toBe(true)
     expect(r.body.series.length).toBe(0)
+  })
+
+  // ─── Display filter integration tests ────────────────────────────────
+  // End-to-end that the /api/cards/:id/history response actually applies
+  // the read-side sanity band on top of the raw rows.
+
+  it('display filter: trims >3× anchor rows using pc_price_raw', async () => {
+    const db = openMemoryDb()
+    cacheInvalidateAll()
+    resetFreeSetIdsCacheForTests()
+    seedMinimalCard(db)
+    db.prepare(`UPDATE cards SET pc_price_raw = 10 WHERE id = ?`).run('test-card-1')
+    // 3 normal rows + 1 contaminated $3000 row. Anchor $10 → cap $30.
+    db.prepare(
+      `INSERT INTO price_history (card_id, timestamp, tcgplayer_market) VALUES
+       (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
+    ).run(
+      'test-card-1', isoDay(4), 10,
+      'test-card-1', isoDay(3), 12,
+      'test-card-1', isoDay(2), 3000,
+      'test-card-1', isoDay(1), 11,
+    )
+
+    const r = await request(createApp(db)).get('/api/cards/test-card-1/history')
+    expect(r.status).toBe(200)
+    expect(r.body.filtered).toBe(1)
+    expect(r.body.series.length).toBe(3)
+    expect(r.body.series.every((p: any) => p.price <= 30)).toBe(true)
+  })
+
+  it('display filter: Wattrel-shape ($0.01 cents-bug) is trimmed via market_price fallback when pc_price_raw is NULL', async () => {
+    const db = openMemoryDb()
+    cacheInvalidateAll()
+    resetFreeSetIdsCacheForTests()
+    seedMinimalCard(db)
+    // seedMinimalCard sets market_price=10 and pc_price_raw=null.
+    // Anchor falls through to market_price=10 → band [$1.50, $30].
+    db.prepare(
+      `INSERT INTO price_history (card_id, timestamp, tcgplayer_market) VALUES
+       (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
+    ).run(
+      'test-card-1', isoDay(5), 0.01,  // cents-bug
+      'test-card-1', isoDay(4), 8,     // OK
+      'test-card-1', isoDay(3), 10,    // OK
+      'test-card-1', isoDay(2), 3500,  // contamination spike
+      'test-card-1', isoDay(1), 9,     // OK
+    )
+
+    const r = await request(createApp(db)).get('/api/cards/test-card-1/history')
+    expect(r.status).toBe(200)
+    expect(r.body.filtered).toBe(2)
+    expect(r.body.series.length).toBe(3)
+    expect(r.body.series.every((p: any) => p.price >= 1.5 && p.price <= 30)).toBe(true)
+  })
+
+  it('display filter: bails out when filter would reject > 60% (anchor likely stale)', async () => {
+    const db = openMemoryDb()
+    cacheInvalidateAll()
+    resetFreeSetIdsCacheForTests()
+    seedMinimalCard(db)
+    // anchor $5 but the whole series is at $100+ (card has rallied past
+    // the stale anchor). Don't hide the chart.
+    db.prepare(`UPDATE cards SET pc_price_raw = 5, market_price = 5 WHERE id = ?`).run('test-card-1')
+    const inserts = Array.from({ length: 10 }, (_, i) => [
+      'test-card-1', isoDay(10 - i), 100 + i,
+    ]).flat()
+    db.prepare(
+      `INSERT INTO price_history (card_id, timestamp, tcgplayer_market) VALUES ` +
+      Array(10).fill('(?, ?, ?)').join(', '),
+    ).run(...inserts)
+
+    const r = await request(createApp(db)).get('/api/cards/test-card-1/history')
+    expect(r.status).toBe(200)
+    // All 10 rows kept, filtered=0 (bail-out path)
+    expect(r.body.filtered).toBe(0)
+    expect(r.body.series.length).toBe(10)
+  })
+
+  it('display filter: no anchor and no market_price → no filter applied', async () => {
+    const db = openMemoryDb()
+    cacheInvalidateAll()
+    resetFreeSetIdsCacheForTests()
+    seedMinimalCard(db)
+    db.prepare(`UPDATE cards SET pc_price_raw = NULL, market_price = NULL WHERE id = ?`).run('test-card-1')
+    db.prepare(
+      `INSERT INTO price_history (card_id, timestamp, tcgplayer_market) VALUES
+       (?, ?, ?), (?, ?, ?)`,
+    ).run('test-card-1', isoDay(2), 5, 'test-card-1', isoDay(1), 3000)
+
+    const r = await request(createApp(db)).get('/api/cards/test-card-1/history')
+    expect(r.body.filtered).toBe(0)
+    expect(r.body.series.length).toBe(2)
   })
 })
 

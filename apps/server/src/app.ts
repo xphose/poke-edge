@@ -361,14 +361,34 @@ export function createApp(db: Database) {
   app.get('/api/cards/:id/history', optionalAuth, (req, res) => {
     const cardId = String(req.params.id)
     const card = db
-      .prepare(`SELECT id, set_id, pc_price_bgs10, pc_price_raw FROM cards WHERE id = ?`)
+      .prepare(
+        `SELECT id, set_id, pc_price_bgs10, pc_price_raw, market_price FROM cards WHERE id = ?`,
+      )
       .get(cardId) as {
       id: string
       set_id: string | null
       pc_price_bgs10: number | null
       pc_price_raw: number | null
+      market_price: number | null
     } | undefined
     if (!card) return res.status(404).json({ error: 'Not found' })
+
+    // Display-filter anchor preference:
+    //   1. pc_price_raw   — PriceCharting raw median, the most trusted.
+    //   2. market_price   — current TCG live price (kept fresh by the
+    //                        ingest gate — already gated for outliers so
+    //                        it's always a plausible current number).
+    //   3. null           — no filter applied.
+    // We fall through to market_price when a card isn't PC-matched yet,
+    // which is ~3,500 of 20,000 cards post-match-phase. Without this
+    // fallback those cards keep showing the $0.01-to-$3000 tail of
+    // contamination while the backfill slowly trickles through.
+    const displayAnchor =
+      card.pc_price_raw != null && card.pc_price_raw > 0
+        ? card.pc_price_raw
+        : card.market_price != null && card.market_price > 0
+          ? card.market_price
+          : null
 
     if (isFreeUser(req) && card.set_id) {
       const allowed = getFreeSetIds(db)
@@ -495,7 +515,7 @@ export function createApp(db: Database) {
         price: number
         source: string
       }[]
-      const { series: clean, filtered } = applyHistoryDisplayFilter(rawRows, card.pc_price_raw)
+      const { series: clean, filtered } = applyHistoryDisplayFilter(rawRows, displayAnchor)
       return res.json({ grade, source, pointInTime: false, series: clean, filtered })
     }
 
