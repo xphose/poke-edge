@@ -28,11 +28,20 @@ function setCardPcAnchor(db: Database.Database, cardId: string, pcPriceRaw: numb
   db.prepare(`UPDATE cards SET pc_price_raw = ? WHERE id = ?`).run(pcPriceRaw, cardId)
 }
 
+function setCardMarketPrice(db: Database.Database, cardId: string, marketPrice: number | null) {
+  db.prepare(`UPDATE cards SET market_price = ? WHERE id = ?`).run(marketPrice, cardId)
+}
+
 describe('scrubPriceHistory', () => {
   let db: Database.Database
   beforeEach(() => {
     db = openMemoryDb()
     seedMinimalCard(db)
+    // seedMinimalCard seeds market_price=10. Scrub tests that don't
+    // explicitly exercise the market_price fallback anchor should behave
+    // as if there was no anchor at all (tests pre-date the fallback).
+    // The market_price-fallback describe block sets it explicitly.
+    setCardMarketPrice(db, 'test-card-1', null)
   })
 
   it('is a no-op on clean history', () => {
@@ -283,6 +292,63 @@ describe('scrubPriceHistory', () => {
       ])
       const r = scrubPriceHistory(db)
       expect(r.rowsWinsorized).toBe(0)
+    })
+  })
+
+  // ─── Market-price fallback anchor ──────────────────────────────────
+  //
+  // ~14,000 of 20,000 cards don't have pc_price_raw yet. Without a
+  // fallback the scrub couldn't touch any Signal E contamination on
+  // these cards, and the display filter bails when rejection > 60%.
+  // Wattrel-shape = no PC anchor + $0.05 market_price + $3000 ghost
+  // rows mixed in with the real $0.05 data.
+  describe('market_price fallback anchor', () => {
+    it('winsorizes $3000 row on $0.05 market_price card (no PC anchor)', () => {
+      // seedMinimalCard sets market_price = 10. We override to 0.05.
+      setCardMarketPrice(db, 'test-card-1', 0.05)
+      // pc_price_raw remains NULL — falls through to market_price anchor.
+      addHistory(db, 'test-card-1', [
+        ...Array.from({ length: 20 }, (_, i) => ({ daysAgo: 30 - i, market: 0.05, low: 0.03 })),
+        { daysAgo: 5, market: 3000, low: 2500 }, // contamination spike
+      ])
+      const r = scrubPriceHistory(db)
+      expect(r.rowsWinsorized).toBeGreaterThan(0)
+      const max = db
+        .prepare(`SELECT MAX(tcgplayer_market) AS mx FROM price_history WHERE card_id='test-card-1'`)
+        .get() as { mx: number }
+      expect(max.mx).toBeLessThanOrEqual(1)
+    })
+
+    it('prefers pc_price_raw over market_price when both are present', () => {
+      // pc_price_raw = 500, market_price = 1 (stale). Anchor should be
+      // the PC raw, so a $50 row is fine (0.1×) but a $1500 row is flagged.
+      setCardPcAnchor(db, 'test-card-1', 500)
+      setCardMarketPrice(db, 'test-card-1', 1) // stale TCG low
+      addHistory(db, 'test-card-1', [
+        ...Array.from({ length: 20 }, (_, i) => ({ daysAgo: 30 - i, market: 500, low: 450 })),
+        { daysAgo: 5, market: 1600, low: 1400 }, // > pcAnchorHardMultiplier * 500 = 1500
+      ])
+      const r = scrubPriceHistory(db)
+      expect(r.rowsWinsorized).toBeGreaterThan(0)
+      const max = db
+        .prepare(`SELECT MAX(tcgplayer_market) AS mx FROM price_history WHERE card_id='test-card-1'`)
+        .get() as { mx: number }
+      // Would have been left alone by market_price anchor (1 × 3 = 3, so 1600 >> 3 still fires),
+      // but the winsorize target is the PC anchor (500), not the market_price.
+      expect(max.mx).toBeLessThanOrEqual(500)
+    })
+
+    it('does not use market_price when it is below marketAnchorFloor ($0.02)', () => {
+      // market_price = $0.01 is too low to trust as an anchor (pure
+      // cents-bug possibility). Scrub should no-op on Signal E.
+      setCardMarketPrice(db, 'test-card-1', 0.01)
+      addHistory(db, 'test-card-1', [
+        { daysAgo: 5, market: 3000, low: 2500 }, // would be caught if anchor fired
+        ...Array.from({ length: 10 }, (_, i) => ({ daysAgo: 20 - i, market: 0.01, low: 0.01 })),
+      ])
+      const r = scrubPriceHistory(db)
+      expect(r.rowsWinsorized).toBe(0)
+      expect(r.rowsDeleted).toBe(0)
     })
   })
 

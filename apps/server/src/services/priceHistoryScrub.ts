@@ -130,6 +130,12 @@ export interface ScrubOptions {
    * 100× smaller than the PC anchor is a near-certain cents-bug.
    */
   pcAnchorHardFloorMultiplier?: number
+  /**
+   * Minimum `cards.market_price` to use it as a fallback anchor when
+   * `pc_price_raw` is missing. Low (0.02) because market_price is a live
+   * price — commons go down to $0.05 and are still valid anchors.
+   */
+  marketAnchorFloor?: number
   windowDays?: number
   maxDeleteFraction?: number
   /**
@@ -172,6 +178,19 @@ const DEFAULTS = {
   // never legitimate card prices, they're cents-bug ingests.
   pcAnchorFloorMultiplier: 0.1,
   pcAnchorHardFloorMultiplier: 0.01,
+  // Secondary anchor: cards.market_price — current TCG live price, kept
+  // fresh by the gated ingest. Used for the ~14,000 cards (70% of catalog)
+  // that aren't yet PriceCharting-matched. Without this, Wattrel and
+  // friends keep their $3000 contamination rows because Signal E sits
+  // idle with no anchor to fire on.
+  //
+  // market_price is less trustworthy than pc_price_raw (it's a single
+  // recent tick, not a volume-weighted median), so we accept anchors
+  // down to $0.02 (vs PC's $5 floor) but leave all multipliers the same.
+  // The hard-cap ceiling/floor promotes still fire — contamination that's
+  // ≥3× current market price or ≤0.01× is egregious regardless of anchor
+  // source.
+  marketAnchorFloor: 0.02,
   windowDays: 7,
   maxDeleteFraction: 0.25,
   // 5 passes is plenty — iteration converges monotonically and in
@@ -222,7 +241,7 @@ export function scrubPriceHistory(db: Database.Database, opts: ScrubOptions = {}
      ORDER BY timestamp ASC`,
   )
   const cardAnchorStmt = db.prepare(
-    `SELECT pc_price_raw FROM cards WHERE id = ?`,
+    `SELECT pc_price_raw, market_price FROM cards WHERE id = ?`,
   )
   const deleteStmt = db.prepare(`DELETE FROM price_history WHERE rowid = ?`)
   const winsorizeStmt = db.prepare(
@@ -233,10 +252,26 @@ export function scrubPriceHistory(db: Database.Database, opts: ScrubOptions = {}
 
   for (const { card_id, total } of cards) {
     result.cardsExamined++
-    // Card-level PC anchor is constant for this card across all passes.
-    const cardAnchor =
-      (cardAnchorStmt.get(card_id) as { pc_price_raw: number | null } | undefined)?.pc_price_raw ?? null
-    const pcAnchorUsable = cardAnchor != null && cardAnchor >= cfg.pcAnchorFloor
+    // Card-level anchor is constant for this card across all passes.
+    // Prefer pc_price_raw (PC's volume-smoothed raw median) when available;
+    // fall back to cards.market_price (current TCG live price, gated at
+    // ingest) so we can still catch contamination on the ~14,000 cards
+    // that haven't been PC-matched yet.
+    const anchorRow =
+      (cardAnchorStmt.get(card_id) as {
+        pc_price_raw: number | null
+        market_price: number | null
+      } | undefined) ?? { pc_price_raw: null, market_price: null }
+    let cardAnchor: number | null = null
+    if (anchorRow.pc_price_raw != null && anchorRow.pc_price_raw >= cfg.pcAnchorFloor) {
+      cardAnchor = anchorRow.pc_price_raw
+    } else if (
+      anchorRow.market_price != null &&
+      anchorRow.market_price >= cfg.marketAnchorFloor
+    ) {
+      cardAnchor = anchorRow.market_price
+    }
+    const pcAnchorUsable = cardAnchor != null && cardAnchor > 0
 
     let cardDeleted = 0
     let cardWinsorized = 0
