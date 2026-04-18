@@ -1513,9 +1513,16 @@ function SetFilterDropdown({
             All sets
           </button>
           {sets.map((s) => (
-            <div key={s.id} className="w-full">
-              <Tooltip>
-                <TooltipTrigger className="block w-full border-0 bg-transparent p-0 text-left">
+            <Tooltip key={s.id}>
+              {/*
+                 base-ui's TooltipTrigger renders its own <button> by default.
+                 Previously we wrapped an inner <button role="option"> which
+                 produced a nested <button>-in-<button> DOM and a React
+                 hydration warning. `render` makes the trigger element BE
+                 the option button — no nesting.
+              */}
+              <TooltipTrigger
+                render={
                   <button
                     type="button"
                     role="option"
@@ -1529,16 +1536,16 @@ function SetFilterDropdown({
                       onChange(s.id)
                       setOpen(false)
                     }}
-                  >
-                    <span className="text-muted-foreground">{s.id}</span>
-                    <span> — {s.name ?? s.id}</span>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="right" align="start" className="max-w-xs">
-                  <SetMetaTooltipBody s={s} />
-                </TooltipContent>
-              </Tooltip>
-            </div>
+                  />
+                }
+              >
+                <span className="text-muted-foreground">{s.id}</span>
+                <span> — {s.name ?? s.id}</span>
+              </TooltipTrigger>
+              <TooltipContent side="right" align="start" className="max-w-xs">
+                <SetMetaTooltipBody s={s} />
+              </TooltipContent>
+            </Tooltip>
           ))}
         </div>
       )}

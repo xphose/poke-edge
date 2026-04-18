@@ -30,6 +30,21 @@ const base = ''
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const startedWithToken = !!getAccessToken()
   const token = await getValidAccessToken()
+
+  // If we started with a stored access token but the proactive refresh
+  // inside getValidAccessToken() cleared it (refresh cookie gone, 400/401
+  // from /refresh, network hiccup, server restart invalidating JWTs), the
+  // session is effectively dead. Do NOT fall through to an anonymous
+  // fetch: endpoints like /api/cards and /api/meta/card-filters happily
+  // serve free-tier responses to unauthenticated callers (200 OK,
+  // tier_limited=true), which previously produced the "search mew → 2
+  // cards, sets dropdown shrinks to 3" silent-downgrade bug. Notify the
+  // AuthProvider so it clears cached queries and redirects to /login.
+  if (startedWithToken && !token) {
+    notifySessionExpired()
+    throw new SessionExpiredError()
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...init?.headers as Record<string, string> }
   if (token) headers['Authorization'] = `Bearer ${token}`
 

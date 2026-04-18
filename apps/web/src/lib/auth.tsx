@@ -321,6 +321,16 @@ export function useAuth(): AuthContextType {
 async function authApi<T>(path: string, init?: RequestInit): Promise<T> {
   const startedWithToken = !!getAccessToken()
   const token = await getValidAccessToken()
+
+  // Mirror of the guard in lib/api.ts: if we started authed but refresh
+  // killed the token, the session is dead. /api/auth/me (and any other
+  // authenticated authApi caller) would otherwise fall through to an
+  // anonymous fetch with no Authorization header.
+  if (startedWithToken && !token) {
+    notifySessionExpired()
+    throw new SessionExpiredError()
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
