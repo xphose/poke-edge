@@ -8,6 +8,8 @@
     "dev": "concurrently -n web,api -c cyan,magenta \"npm run dev -w web\" \"npm run dev -w server\"",
     "dev:web": "npm run dev -w web",
     "dev:api": "npm run dev -w server",
+    "dev:prod-data": "bash scripts/dev-with-prod-data.sh",
+    "snapshot": "bash scripts/pull-prod-snapshot.sh",
     "build": "npm run build -w server && npm run build -w web",
     "start": "npm run start -w server",
     "test": "npm run test -w server && npm run test -w web",
