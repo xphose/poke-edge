@@ -35,6 +35,15 @@ export default function App() {
               <Route index element={<Dashboard />} />
               <Route path="sets" element={<SetsPage />} />
               <Route path="cards" element={<Cards />} />
+              {/*
+                Deep-link to a single card. Re-uses the Cards page (which
+                already has the detail dialog wiring) and auto-opens the
+                detail drawer for `:id` on mount. Without this route a URL
+                like `/cards/sv4pt5-232` falls through React Router and the
+                user sees a blank screen — that exact 404 was the bug
+                report on 2026-04-18.
+              */}
+              <Route path="cards/:id" element={<Cards />} />
               <Route path="analytics" element={<ProtectedRoute requiredRole="premium"><AnalyticsPage /></ProtectedRoute>} />
               <Route path="watchlist" element={<ProtectedRoute requiredRole="premium"><WatchlistPage /></ProtectedRoute>} />
               <Route path="signals" element={<ProtectedRoute requiredRole="premium"><BuySignals /></ProtectedRoute>} />

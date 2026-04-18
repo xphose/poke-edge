@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Area,
   AreaChart,
@@ -299,6 +299,10 @@ export function Cards() {
 
   const show = (col: ColumnId) => columnVis.has(col)
 
+  const navigate = useNavigate()
+  const routeParams = useParams<{ id?: string }>()
+  const deepLinkId = routeParams.id ?? null
+
   const [open, setOpen] = useState(false)
   const [sel, setSel] = useState<CardRow | null>(null)
   const [hist, setHist] = useState<Hist[]>([])
@@ -315,6 +319,45 @@ export function Cards() {
     setCondition(loadStoredCondition())
     setShowAdjusted(loadShowAdjusted())
   }, [])
+
+  // Deep-link support: `/cards/:id` should land you on the card list with
+  // the detail dialog auto-opened for that card. Without this effect the
+  // route renders fine but `sel` stays null and you see a list-only page,
+  // which is the user-visible bug from the 2026-04-18 report.
+  //
+  // We call `/api/cards/:id` directly (instead of waiting for it to appear
+  // in the infinite-query results) so the deep link works regardless of
+  // current filter / sort / scroll position.
+  const lastOpenedDeepLinkRef = useRef<string | null>(null)
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7308/ingest/ab1dabe4-139b-4e33-a5c9-bbead4ed210c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ba40ef'},body:JSON.stringify({sessionId:'ba40ef',hypothesisId:'A',location:'Cards.tsx:deepLinkEffect',message:'deepLink effect fired',data:{deepLinkId,selId:sel?.id??null,alreadyOpened:lastOpenedDeepLinkRef.current},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (!deepLinkId) return
+    if (sel?.id === deepLinkId) return
+    if (lastOpenedDeepLinkRef.current === deepLinkId) return
+    lastOpenedDeepLinkRef.current = deepLinkId
+    let cancelled = false
+    ;(async () => {
+      try {
+        const c = await api<CardRow>(`/api/cards/${deepLinkId}`)
+        if (cancelled) return
+        // #region agent log
+        fetch('http://127.0.0.1:7308/ingest/ab1dabe4-139b-4e33-a5c9-bbead4ed210c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ba40ef'},body:JSON.stringify({sessionId:'ba40ef',hypothesisId:'A',location:'Cards.tsx:deepLinkEffect.fetched',message:'api/cards/:id resolved',data:{deepLinkId,cardId:c?.id,cardName:c?.name,pcPsa10:c?.pc_price_psa10},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        await openDetail(c)
+      } catch (e) {
+        // #region agent log
+        fetch('http://127.0.0.1:7308/ingest/ab1dabe4-139b-4e33-a5c9-bbead4ed210c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'ba40ef'},body:JSON.stringify({sessionId:'ba40ef',hypothesisId:'A',location:'Cards.tsx:deepLinkEffect.error',message:'api/cards/:id failed',data:{deepLinkId,error:String(e)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        // Card not found (404) or session expired — silently fall back to
+        // the list view so the user can search instead of seeing a stuck
+        // loading spinner.
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkId])
 
   const metaQuery = useQuery({
     queryKey: ['api', 'meta', 'card-filters', setFilter || ''],
@@ -481,6 +524,13 @@ export function Cards() {
     setBrushRange(null)
     setSelectedGrade('raw')
     setSelectedSource('both')
+    // Reflect the open card in the URL so it's bookmarkable / shareable
+    // and so the back button takes you back to the list. Use replace when
+    // we landed via the deep-link (so the user doesn't need two Backs to
+    // leave) and push otherwise.
+    if (window.location.pathname !== `/cards/${c.id}`) {
+      navigate(`/cards/${c.id}${window.location.search}`)
+    }
     await fetchGradeHistory(c.id, 'raw', 'both')
     try {
       const i = await api<CardInvestmentInsight>(`/api/cards/${c.id}/investment`)
