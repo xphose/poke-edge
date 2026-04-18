@@ -92,6 +92,15 @@ type SetProduct = {
  * verified = true  → real TCGPlayer market listing
  * verified = false → price estimated or no listing found
  */
+/**
+ * Static price/product table used as a fallback when no sealed_products
+ * snapshot consensus is available. A set being absent from this table
+ * means we don't know what sealed SKU to price — `getProduct` returns
+ * null in that case and `refreshSetMetrics` leaves the set's metric
+ * columns untouched. The Sets UI filters out rows without product_type,
+ * so uncatalogued sets (brand-new releases, promo-only sets, etc.) stay
+ * out of the opportunity map until an operator adds an entry here.
+ */
 const PRODUCT_LOOKUP: Record<string, SetProduct> = {
   // ── Scarlet & Violet — Booster Box sets ────────────────────
   sv10:     { type: 'bb',  packs: 36, price: 521,  verified: true  }, // Destined Rivals
@@ -144,25 +153,68 @@ const PRODUCT_LOOKUP: Record<string, SetProduct> = {
   // ── SV Special Split Expansion (ETB-only in English) ───────
   zsv10pt5: { type: 'etb', packs: 9,  price: 96,   verified: false }, // Black Bolt
   rsv10pt5: { type: 'etb', packs: 9,  price: 98,   verified: false }, // White Flare
+
+  // ── Mega Evolution era (2025-2026) ─────────────────────────
+  me1:    { type: 'bb',  packs: 36, price: 250.74, verified: true }, // Mega Evolution
+  me2:    { type: 'bb',  packs: 36, price: 346.92, verified: true }, // Phantasmal Flames
+  me2pt5: { type: 'etb', packs: 9,  price: 144.76, verified: true }, // Ascended Heroes (ETB only)
+  me3:    { type: 'bb',  packs: 36, price: 203.88, verified: true }, // Perfect Order
 }
 
-function getProduct(setId: string): SetProduct {
-  return PRODUCT_LOOKUP[setId] ?? { type: 'bb', packs: 36, price: 144, verified: false }
+/**
+ * Return the known product entry for a set, or null if we don't have one.
+ * Returning null (rather than a fabricated $144 fallback) keeps unknown
+ * sets out of the Sets UI instead of polluting it with phantom prices.
+ */
+function getProduct(setId: string): SetProduct | null {
+  return PRODUCT_LOOKUP[setId] ?? null
 }
 
-/** Aggregate EV / chase metrics per set (heuristic). */
+/**
+ * Recompute per-set metrics (sealed price, EV / box, chase score, verdict).
+ *
+ * Invariants this function enforces:
+ *   1. A set is written to only when we have a known product (catalog entry
+ *      or static lookup). Unknown sets are left alone so the UI can filter
+ *      them out by `product_type IS NULL`.
+ *   2. Once a catalogued set is touched, `product_type` and `product_packs`
+ *      are always written, even if there aren't enough priced cards yet to
+ *      compute EV. This lets the UI render a "Awaiting card prices" state.
+ *   3. Sub-sets (trainer galleries, shiny vaults, etc.) are short-circuited
+ *      with zeroed metrics and a sub-set verdict.
+ *   4. If a previously catalogued set ends up with stale fallback values
+ *      (e.g. the old $144 phantom price), this pass clears them.
+ */
 export function refreshSetMetrics(db: Database.Database) {
-  const sets = db.prepare(`SELECT id, box_price, release_date FROM sets`).all() as {
+  const sets = db.prepare(`SELECT id, box_price, release_date, total_cards FROM sets`).all() as {
     id: string
     box_price: number | null
     release_date: string | null
+    total_cards: number | null
   }[]
 
   for (const s of sets) {
     const catalogEntry = getCatalogEntry(s.id)
     const staticProduct = getProduct(s.id)
-    const productType = catalogEntry?.type ?? staticProduct.type
-    const packs = catalogEntry?.packs ?? staticProduct.packs
+
+    if (!catalogEntry && !staticProduct) {
+      // Unknown set — we don't have a sealed product to price. Clear any
+      // previously written phantom fallback values so the UI stops showing
+      // this set with a fake $144 price and a bogus EV ratio.
+      db.prepare(
+        `UPDATE sets
+         SET box_price = NULL, box_price_verified = 0,
+             product_type = NULL, product_packs = NULL,
+             price_sources = 0, price_confidence = 'low',
+             ev_per_box = NULL, set_chase_score = NULL,
+             rip_or_singles_verdict = NULL
+         WHERE id = ? AND (product_type IS NULL OR box_price_verified = 0)`,
+      ).run(s.id)
+      continue
+    }
+
+    const productType = catalogEntry?.type ?? staticProduct!.type
+    const packs = catalogEntry?.packs ?? staticProduct!.packs
 
     if (productType === 'sub') {
       db.prepare(
@@ -175,9 +227,11 @@ export function refreshSetMetrics(db: Database.Database) {
     }
 
     const consensus: ConsensusResult | null = computeConsensus(db, s.id, productType)
-    const price = consensus?.price ?? staticProduct.price
-    const verified = consensus ? consensus.confidence !== 'low' : staticProduct.verified
-    const sources = consensus?.sources ?? (staticProduct.verified ? 1 : 0)
+    const price = consensus?.price ?? staticProduct?.price ?? null
+    const verified = consensus
+      ? consensus.confidence !== 'low'
+      : (staticProduct?.verified ?? false)
+    const sources = consensus?.sources ?? (staticProduct?.verified ? 1 : 0)
     const confidence = consensus?.confidence ?? 'low'
 
     const cards = db
@@ -192,16 +246,44 @@ export function refreshSetMetrics(db: Database.Database) {
       rarity: string | null
     }[]
 
-    if (!cards.length) continue
+    // Not enough priced-card data yet to compute a trustworthy EV.
+    // Still surface product_type/packs/price so the UI can render a
+    // "Awaiting card prices" state for this catalogued set rather than
+    // silently dropping it.
+    //
+    // The threshold is conservative — EV aggregation with fewer than ~20
+    // priced cards in a standard-sized set produces wildly unstable
+    // numbers because a single $500 chase card ends up representing its
+    // entire tier. Leave ev/chase NULL and let the UI show "pending".
+    const MIN_PRICED_CARDS_FOR_EV = 20
+    if (cards.length < MIN_PRICED_CARDS_FOR_EV) {
+      db.prepare(
+        `UPDATE sets SET box_price = ?, box_price_verified = ?,
+         product_type = ?, product_packs = ?,
+         price_sources = ?, price_confidence = ?,
+         ev_per_box = NULL, set_chase_score = NULL,
+         rip_or_singles_verdict = ? WHERE id = ?`,
+      ).run(
+        price, verified ? 1 : 0,
+        productType, packs,
+        sources, confidence,
+        '\u{23F3} Awaiting card prices',
+        s.id,
+      )
+      continue
+    }
 
     const top10 = [...cards].sort((a, b) => b.market_price - a.market_price).slice(0, 10)
     const avgDes = top10.reduce((a, b) => a + (b.desirability_score ?? 5), 0) / top10.length
     const avgPull = top10.reduce((a, b) => a + (b.pull_cost_score ?? 5), 0) / top10.length
     const setChase = avgDes * 0.6 + avgPull * 0.4
 
-    const isSubSet = cards.length < 50
-    const subSetDampen = isSubSet ? 0.12 : 1.0
-
+    // NOTE: previous versions dampened EV by 0.12 whenever `cards.length < 50`,
+    // intending to catch sub-sets. But `cards` here is *priced* cards only, so
+    // new sets with incomplete pricing were silently flagged as sub-sets and
+    // had their EV crushed to 12%. The real sub-set case is already handled
+    // above by the `productType === 'sub'` short-circuit, so no dampener is
+    // needed here.
     const packScale = packs / 36
 
     const tierGroups = new Map<PullTier, typeof cards>()
@@ -214,7 +296,7 @@ export function refreshSetMetrics(db: Database.Database) {
 
     let ev = 0
     for (const [tier, tierCards] of tierGroups) {
-      const rawSlots = (TIER_SLOTS_PER_BOX[tier] ?? 5) * subSetDampen * packScale
+      const rawSlots = (TIER_SLOTS_PER_BOX[tier] ?? 5) * packScale
       const uniqueCards = tierCards.length
       const rawCopies = rawSlots / uniqueCards
       const maxCop = (MAX_COPIES[tier] ?? 1) * packScale
@@ -228,14 +310,14 @@ export function refreshSetMetrics(db: Database.Database) {
       ? Math.max(0, (Date.now() - rel.getTime()) / (365.25 * 86_400_000))
       : 0
 
-    const evRatio = price > 0 ? ev / price : 0
+    const evRatio = price && price > 0 ? ev / price : 0
 
     const highValueEv = cards
       .filter(c => c.market_price >= 20)
       .reduce((sum, c) => {
         const tier = rarityToTier(c.rarity ?? '')
         const group = tierGroups.get(tier) ?? []
-        const rawSlots = (TIER_SLOTS_PER_BOX[tier] ?? 5) * subSetDampen * packScale
+        const rawSlots = (TIER_SLOTS_PER_BOX[tier] ?? 5) * packScale
         const maxCop = (MAX_COPIES[tier] ?? 1) * packScale
         const copies = Math.min(rawSlots / group.length, maxCop)
         return sum + c.market_price * copies
@@ -243,7 +325,9 @@ export function refreshSetMetrics(db: Database.Database) {
     const concentrationPct = ev > 0 ? highValueEv / ev : 0
 
     let verdict: string
-    if (ageYears >= 3 && evRatio < 1.2) {
+    if (!price || price <= 0) {
+      verdict = '\u{23F3} Awaiting sealed price'
+    } else if (ageYears >= 3 && evRatio < 1.2) {
       verdict = '\u{1F7E3} Hold sealed (appreciating collectible)'
     } else if (evRatio >= 1.1 && concentrationPct < 0.7) {
       verdict = '\u{1F534} Rip packs (EV-positive)'

@@ -58,10 +58,11 @@ function productShort(t: ProductType | null): string {
   return 'BB'
 }
 
-type VerdictClass = 'buy_singles' | 'rip' | 'rip_caution' | 'hold_sealed' | 'breakeven'
+type VerdictClass = 'buy_singles' | 'rip' | 'rip_caution' | 'hold_sealed' | 'breakeven' | 'pending'
 
 function classifyVerdict(verdict: string | null): VerdictClass {
   const v = verdict ?? ''
+  if (v.includes('Awaiting') || v.includes('\u{23F3}')) return 'pending'
   if (v.includes('Buy singles') || v.includes('\u{1F7E2}')) return 'buy_singles'
   if (v.includes('Rip packs') || v.includes('\u{1F534}')) return 'rip'
   if (v.includes('Rip with caution') || v.includes('chase-heavy')) return 'rip_caution'
@@ -74,7 +75,8 @@ function verdictLabel(vc: VerdictClass): string {
     : vc === 'rip' ? 'Rip packs'
       : vc === 'rip_caution' ? 'Rip (caution)'
         : vc === 'hold_sealed' ? 'Hold sealed'
-          : 'Break-even'
+          : vc === 'pending' ? 'Awaiting data'
+            : 'Break-even'
 }
 
 function verdictTextColor(vc: VerdictClass): string {
@@ -82,7 +84,8 @@ function verdictTextColor(vc: VerdictClass): string {
     : vc === 'rip' ? 'text-red-600 dark:text-red-400'
       : vc === 'rip_caution' ? 'text-orange-600 dark:text-orange-400'
         : vc === 'hold_sealed' ? 'text-purple-600 dark:text-purple-400'
-          : 'text-amber-600 dark:text-amber-400'
+          : vc === 'pending' ? 'text-muted-foreground'
+            : 'text-amber-600 dark:text-amber-400'
 }
 
 function verdictBorderColor(vc: VerdictClass): string {
@@ -90,7 +93,8 @@ function verdictBorderColor(vc: VerdictClass): string {
     : vc === 'rip' ? 'border-red-500/40'
       : vc === 'rip_caution' ? 'border-orange-500/40'
         : vc === 'hold_sealed' ? 'border-purple-500/40'
-          : 'border-amber-500/40'
+          : vc === 'pending' ? 'border-border/60'
+            : 'border-amber-500/40'
 }
 
 function verdictDotColor(vc: VerdictClass): string {
@@ -98,7 +102,8 @@ function verdictDotColor(vc: VerdictClass): string {
     : vc === 'rip' ? 'oklch(0.62 0.22 25)'
       : vc === 'rip_caution' ? 'oklch(0.72 0.18 55)'
         : vc === 'hold_sealed' ? 'oklch(0.62 0.18 300)'
-          : 'oklch(0.78 0.16 85)'
+          : vc === 'pending' ? 'oklch(0.65 0.02 250)'
+            : 'oklch(0.78 0.16 85)'
 }
 
 export function SetsPage() {
@@ -114,7 +119,14 @@ export function SetsPage() {
     saveSetsVerdictFilter(verdictFilter)
   }, [verdictFilter])
 
-  const nonSubSets = useMemo(() => sets.filter(s => (s.product_type as ProductType) !== 'sub'), [sets])
+  // Only show sets we have a sealed product for. Uncatalogued sets (brand-new
+  // releases we haven't added yet, promo-only sets, energy reprints, etc.)
+  // come back from the API with product_type = null and would otherwise
+  // clutter the Sets tab with phantom prices and meaningless EV ratios.
+  const nonSubSets = useMemo(
+    () => sets.filter(s => s.product_type != null && (s.product_type as ProductType) !== 'sub'),
+    [sets],
+  )
 
   const filtered = useMemo(() => {
     if (verdictFilter === 'all') return nonSubSets
@@ -279,15 +291,21 @@ export function SetsPage() {
                   <span className="text-muted-foreground">EV / {productShort(s.product_type as ProductType)}</span>
                   <span className="tabular-nums font-medium">{(s.ev_per_box ?? 0) > 0 ? `$${(s.ev_per_box ?? 0).toFixed(2)}` : '—'}</span>
                   <span className="text-muted-foreground">EV ratio</span>
-                  <span className={cn('tabular-nums font-semibold',
-                    (s.ev_per_box ?? 0) / Math.max(1, s.box_price ?? 120) >= 1.15 ? 'text-red-600 dark:text-red-400'
-                      : (s.ev_per_box ?? 0) / Math.max(1, s.box_price ?? 120) >= 0.85 ? 'text-amber-600 dark:text-amber-400'
-                        : 'text-emerald-600 dark:text-emerald-400',
-                  )}>
-                    {((s.ev_per_box ?? 0) / Math.max(1, s.box_price ?? 120) * 100).toFixed(0)}%
-                  </span>
+                  {s.ev_per_box != null && (s.box_price ?? 0) > 0 ? (
+                    <span className={cn('tabular-nums font-semibold',
+                      (s.ev_per_box ?? 0) / Math.max(1, s.box_price ?? 120) >= 1.15 ? 'text-red-600 dark:text-red-400'
+                        : (s.ev_per_box ?? 0) / Math.max(1, s.box_price ?? 120) >= 0.85 ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-emerald-600 dark:text-emerald-400',
+                    )}>
+                      {((s.ev_per_box ?? 0) / Math.max(1, s.box_price ?? 120) * 100).toFixed(0)}%
+                    </span>
+                  ) : (
+                    <span className="tabular-nums text-muted-foreground">—</span>
+                  )}
                   <span className="text-muted-foreground">Chase score</span>
-                  <span className="tabular-nums">{(s.set_chase_score ?? 0).toFixed(1)} / 10</span>
+                  <span className="tabular-nums">
+                    {s.set_chase_score != null ? `${s.set_chase_score.toFixed(1)} / 10` : '—'}
+                  </span>
                 </div>
                 <Badge variant="outline" className={cn(
                   verdictBorderColor(vc).replace('/40', '/60'), verdictTextColor(vc),

@@ -16,6 +16,14 @@ interface CatalogEntry {
 }
 
 const PRODUCT_CATALOG: CatalogEntry[] = [
+  // ── Mega Evolution era (2025-2026) ─────────────────────────
+  // me1 released 2025-09-26; me2 2025-11-21; me2pt5 2026-01-30 (ETB-only, no BB);
+  // me3 2026-03-27. TCG IDs intentionally left off for now — PriceCharting
+  // scrape is the primary signal until we lock in confirmed TCGPlayer product IDs.
+  { setId: 'me1',     type: 'bb',  packs: 36, pcSlug: 'pokemon-mega-evolution' },
+  { setId: 'me2',     type: 'bb',  packs: 36, pcSlug: 'pokemon-phantasmal-flames' },
+  { setId: 'me2pt5',  type: 'etb', packs: 9,  pcSlug: 'pokemon-ascended-heroes' },
+  { setId: 'me3',     type: 'bb',  packs: 36, pcSlug: 'pokemon-perfect-order' },
   // ── SV Booster Box sets ────────────────────────────────────
   { setId: 'sv10',  type: 'bb',  packs: 36, tcgIds: [624679],  pcSlug: 'pokemon-scarlet-violet-destined-rivals' },
   { setId: 'sv9',   type: 'bb',  packs: 36, tcgIds: [610931],  pcSlug: 'pokemon-scarlet-violet-journey-together' },
@@ -464,4 +472,12 @@ export function seedSealedPrices(db: Database.Database) {
 
   // ── White Flare ETB
   s('rsv10pt5', 'etb', 'estimate', 98, 9)
+
+  // ── Mega Evolution era (seeded from PriceCharting April 2026) ─────
+  // Seeded to bootstrap consensus; the 12h sealed-refresh cron will add
+  // fresher snapshots and the consensus median will move with the market.
+  s('me1',    'bb',  'pricecharting', 250.74, 36)
+  s('me2',    'bb',  'pricecharting', 346.92, 36)
+  s('me2pt5', 'etb', 'pricecharting', 144.76, 9)
+  s('me3',    'bb',  'pricecharting', 203.88, 36)
 }
