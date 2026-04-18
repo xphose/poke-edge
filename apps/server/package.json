@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "validate-model": "tsx src/scripts/validateModel.ts",
-    "audit": "tsx src/scripts/auditPriceHistory.ts"
+    "audit": "tsx src/scripts/auditPriceHistory.ts",
+    "pc:csv": "tsx src/scripts/pcCsv.ts"
   },
   "dependencies": {
     "@esbuild/linux-x64": "^0.27.7",

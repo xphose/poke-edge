@@ -984,6 +984,39 @@ export function createApp(db: Database) {
     },
   )
 
+  // POST /api/internal/backfill-pricecharting-csv — bulk CSV ingest path.
+  // Single HTTP call to PriceCharting (~12 MB) instead of O(N) per-card
+  // calls — dodges the per-product Cloudflare rate-limit. Updates prices for
+  // every card with a known `pricecharting_id` and appends today's snapshot
+  // to `card_grade_history`. Does NOT replace fuzzy-matching for unmatched
+  // cards (still need the per-card backfill for those).
+  //
+  // 200 → ok with stats
+  // 409 → another CSV ingest is already in flight on this node
+  // 500 → download/parse/apply failure (most likely Cloudflare 403 if the
+  //       host IP is currently soft-banned)
+  app.post(
+    '/api/internal/backfill-pricecharting-csv',
+    authenticate,
+    requireAdmin,
+    async (_req, res) => {
+      const { runPcCsvIngest, isPcCsvIngestRunning } = await import(
+        './services/pricechartingCsv.js'
+      )
+      if (isPcCsvIngestRunning()) {
+        res.status(409).json({ ok: false, error: 'PC CSV ingest already running on this node.' })
+        return
+      }
+      try {
+        const stats = await runPcCsvIngest(db)
+        cacheInvalidateAll()
+        res.json({ ok: true, stats })
+      } catch (e) {
+        res.status(500).json({ ok: false, error: String(e) })
+      }
+    },
+  )
+
   app.post('/api/internal/refresh-sealed', authenticate, requireAdmin, async (_req, res) => {
     try {
       const result = await refreshSealedPrices(db)
