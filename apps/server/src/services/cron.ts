@@ -8,7 +8,7 @@ import { refreshEbayMediansForCards } from './ebay.js'
 import { recordPriceSnapshot } from './priceHistory.js'
 import { refreshSetMetrics } from './setMetrics.js'
 import { notifyPriceAlerts } from './push.js'
-import { refreshSealedPrices, seedSealedPrices } from './sealedPrices.js'
+import { refreshSealedPrices } from './sealedPrices.js'
 import { takePredictionSnapshot } from './trackRecord.js'
 import { trainGradientBoostModel } from './analytics/gradientBoost.js'
 import { computeFeatureImportance } from './analytics/featureImportance.js'
@@ -40,8 +40,6 @@ export function startCronJobs(db: Database.Database) {
       refreshing = false
     }
   }
-
-  seedSealedPrices(db)
 
   cron.schedule('0 */4 * * *', safe('prices', () => fullRefresh(db)))
   cron.schedule('0 */6 * * *', safe('ebay', () => refreshEbayMediansForCards(db)))
@@ -137,7 +135,6 @@ async function runAnalyticsModels(db: Database.Database) {
  * Safe for startup — analytics results are served from SQLite via hydrateFromDb.
  */
 export async function dataRefresh(db: Database.Database) {
-  seedSealedPrices(db)
   await ingestPokemonTcg(db)
   await yieldEventLoop()
   runFullModel(db)

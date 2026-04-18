@@ -5,22 +5,27 @@ import { openMemoryDb } from '../test/helpers.js'
 
 // Sanity-check invariants for the per-set EV / chase / verdict pipeline.
 //
-// What we care about:
-//   1. Unknown sets (not in PRODUCT_CATALOG and not in PRODUCT_LOOKUP) are
-//      not given phantom fallback prices. The old $144 / 36-pack fallback
-//      is gone — uncatalogued sets should come out with product_type NULL
-//      so the UI filter can hide them.
-//   2. Sub-sets are short-circuited with product_type='sub' so they can be
-//      filtered out.
-//   3. A catalogued set with no priced cards yet reports product_type but
-//      leaves ev_per_box / set_chase_score NULL and a "pending" verdict.
-//   4. A catalogued set with plenty of priced cards produces a finite,
-//      positive EV, a finite chase score, and a non-"pending" verdict.
-//   5. The stale-$144-fallback bug is actively repaired on re-run: if a set
-//      has phantom values from a prior run, refreshing clears them.
-//   6. The old "sub-set dampener" bug (EV × 0.12 when cards.length < 50)
-//      is gone — a real set with 25 priced cards should still get a
-//      reasonable EV, not a silently crushed one.
+// These tests intentionally never rely on hardcoded prices in the source
+// tree. Sealed prices come from `sealed_products` rows (what the live
+// scrapers populate in production); tests seed those rows explicitly with
+// `seedSealedSnapshot` to simulate a completed refresh.
+//
+// Invariants:
+//   1. Uncatalogued sets end up NULL across all metric columns so the UI
+//      can hide them. No phantom prices anywhere in the system.
+//   2. A catalogued set with no sealed_products snapshots renders a
+//      "Awaiting sealed price" pending state — not a hardcoded fallback.
+//   3. A catalogued set with snapshots but too few priced cards renders
+//      "Awaiting card prices" — we surface what we know (price, type)
+//      but don't fabricate an EV from a handful of cards.
+//   4. A catalogued set with snapshots and realistic card pricing produces
+//      a finite, positive EV with a real verdict.
+//   5. The old "sub-set dampener" bug (EV × 0.12 when cards.length < 50)
+//      is gone.
+//   6. A set that was previously uncatalogued and held stale values
+//      (e.g. from a pre-cleanup DB) gets cleared to NULL on re-run.
+//   7. Sub-sets short-circuit with product_type = 'sub'.
+//   8. ME-era catalogued sets behave correctly once fresh snapshots exist.
 
 function seedSet(
   db: Database.Database,
@@ -31,6 +36,25 @@ function seedSet(
     `INSERT INTO sets (id, name, release_date, total_cards, last_updated)
      VALUES (?, ?, ?, ?, datetime('now'))`,
   ).run(id, opts.name ?? id, opts.release_date ?? '2025-01-01', opts.total_cards ?? 200)
+}
+
+/**
+ * Simulate a successful sealed-price refresh by inserting a fresh snapshot
+ * into `sealed_products`. In production these rows come from TCGPlayer /
+ * PriceCharting / eBay fetchers, never from code constants.
+ */
+function seedSealedSnapshot(
+  db: Database.Database,
+  setId: string,
+  productType: 'bb' | 'etb',
+  price: number,
+  packs: number,
+  source = 'test-fixture',
+) {
+  db.prepare(
+    `INSERT INTO sealed_products (set_id, product_type, source, price, packs, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(setId, productType, source, price, packs, new Date().toISOString())
 }
 
 type SeedCard = {
@@ -67,8 +91,8 @@ function seedCards(db: Database.Database, setId: string, cards: SeedCard[]) {
   }
 }
 
-function makeRealisticCards(setId: string, count: number, priceMix: number[] = []): SeedCard[] {
-  // Build a plausible rarity distribution so the EV math hits multiple tiers.
+function makeRealisticCards(setId: string, count: number): SeedCard[] {
+  // Plausible rarity distribution so EV math hits multiple tiers.
   // ~60% commons, 25% uncommons, 8% rares, 4% ultras, 2% illustrations, 1% chase.
   const out: SeedCard[] = []
   for (let i = 0; i < count; i++) {
@@ -81,13 +105,7 @@ function makeRealisticCards(setId: string, count: number, priceMix: number[] = [
     else if (frac < 0.97) { rarity = 'Ultra Rare'; price = 15 }
     else if (frac < 0.99) { rarity = 'Illustration Rare'; price = 40 }
     else { rarity = 'Special Illustration Rare'; price = 120 }
-    out.push({
-      id: `${setId}-${i}`,
-      rarity,
-      market_price: priceMix[i] ?? price,
-      desirability: 7,
-      pullCost: 6,
-    })
+    out.push({ id: `${setId}-${i}`, rarity, market_price: price, desirability: 7, pullCost: 6 })
   }
   return out
 }
@@ -99,7 +117,7 @@ describe('refreshSetMetrics', () => {
     db = openMemoryDb()
   })
 
-  it('uncatalogued set gets NULL product_type so the UI can filter it out', () => {
+  it('uncatalogued set gets NULL across all metric columns', () => {
     seedSet(db, 'unknown-xyz', { name: 'Unknown Expansion' })
     seedCards(db, 'unknown-xyz', makeRealisticCards('unknown-xyz', 200))
 
@@ -118,16 +136,15 @@ describe('refreshSetMetrics', () => {
     expect(row.rip_or_singles_verdict).toBeNull()
   })
 
-  it('clears a stale $144 phantom-price row from a prior refresh', () => {
+  it('clears stale metrics from a previously uncatalogued set', () => {
     seedSet(db, 'stale-set', { name: 'Stale Phantom' })
-    // Simulate what the old code used to write for uncatalogued sets.
+    // Simulate stale values that might exist on an upgrading DB.
     db.prepare(
       `UPDATE sets SET product_type = 'bb', product_packs = 36,
        box_price = 144, box_price_verified = 0,
-       ev_per_box = 500, set_chase_score = 5, rip_or_singles_verdict = '🔴 Rip packs (EV-positive)'
+       ev_per_box = 500, set_chase_score = 5, rip_or_singles_verdict = 'stale'
        WHERE id = ?`,
     ).run('stale-set')
-    seedCards(db, 'stale-set', makeRealisticCards('stale-set', 200))
 
     refreshSetMetrics(db)
 
@@ -143,89 +160,95 @@ describe('refreshSetMetrics', () => {
     expect(row.rip_or_singles_verdict).toBeNull()
   })
 
-  it('a catalogued set with no priced cards yet reports product_type but NULL EV + pending verdict', () => {
-    // me3 Perfect Order is in the catalog but we seed zero priced cards here.
-    seedSet(db, 'me3', { name: 'Perfect Order', release_date: '2026-03-27', total_cards: 124 })
-
-    refreshSetMetrics(db)
-
-    const row = db.prepare('SELECT * FROM sets WHERE id = ?').get('me3') as {
-      product_type: string | null
-      product_packs: number | null
-      box_price: number | null
-      ev_per_box: number | null
-      set_chase_score: number | null
-      rip_or_singles_verdict: string | null
-    }
-
-    expect(row.product_type).toBe('bb')
-    expect(row.product_packs).toBe(36)
-    expect(row.box_price).toBeGreaterThan(0)
-    expect(row.ev_per_box).toBeNull()
-    expect(row.set_chase_score).toBeNull()
-    expect(row.rip_or_singles_verdict).toContain('Awaiting')
-  })
-
-  it('a catalogued set with realistic card pricing produces positive EV and a non-pending verdict', () => {
-    // sv7 Stellar Crown is a standard 36-pack BB with a static lookup entry.
-    seedSet(db, 'sv7', { name: 'Stellar Crown', release_date: '2024-09-13', total_cards: 175 })
+  it('catalogued set with no sealed_products snapshots renders "Awaiting sealed price"', () => {
+    // sv7 is catalogued but we seed no sealed_products rows.
+    seedSet(db, 'sv7', { name: 'Stellar Crown', total_cards: 175 })
     seedCards(db, 'sv7', makeRealisticCards('sv7', 175))
 
     refreshSetMetrics(db)
 
     const row = db.prepare('SELECT * FROM sets WHERE id = ?').get('sv7') as {
       product_type: string | null
+      product_packs: number | null
+      box_price: number | null
+      ev_per_box: number | null
+      rip_or_singles_verdict: string | null
+    }
+
+    expect(row.product_type).toBe('bb')
+    expect(row.product_packs).toBe(36)
+    expect(row.box_price).toBeNull()
+    expect(row.ev_per_box).toBeNull()
+    expect(row.rip_or_singles_verdict).toContain('Awaiting sealed')
+  })
+
+  it('catalogued set with a snapshot but too few priced cards renders "Awaiting card prices"', () => {
+    seedSet(db, 'me3', { name: 'Perfect Order', release_date: '2026-03-27', total_cards: 124 })
+    seedSealedSnapshot(db, 'me3', 'bb', 204, 36)
+    // Only 5 priced cards — below the MIN_PRICED_CARDS_FOR_EV threshold.
+    seedCards(db, 'me3', makeRealisticCards('me3', 5))
+
+    refreshSetMetrics(db)
+
+    const row = db.prepare('SELECT * FROM sets WHERE id = ?').get('me3') as {
+      product_type: string | null
+      box_price: number | null
       ev_per_box: number | null
       set_chase_score: number | null
       rip_or_singles_verdict: string | null
     }
 
     expect(row.product_type).toBe('bb')
+    expect(row.box_price).toBe(204)
+    expect(row.ev_per_box).toBeNull()
+    expect(row.set_chase_score).toBeNull()
+    expect(row.rip_or_singles_verdict).toContain('Awaiting card')
+  })
+
+  it('catalogued set with a snapshot and realistic card pricing produces positive EV', () => {
+    seedSet(db, 'sv7', { name: 'Stellar Crown', release_date: '2024-09-13', total_cards: 175 })
+    seedSealedSnapshot(db, 'sv7', 'bb', 288, 36)
+    seedCards(db, 'sv7', makeRealisticCards('sv7', 175))
+
+    refreshSetMetrics(db)
+
+    const row = db.prepare('SELECT * FROM sets WHERE id = ?').get('sv7') as {
+      product_type: string | null
+      box_price: number | null
+      ev_per_box: number | null
+      set_chase_score: number | null
+      rip_or_singles_verdict: string | null
+    }
+
+    expect(row.product_type).toBe('bb')
+    expect(row.box_price).toBe(288)
     expect(row.ev_per_box).not.toBeNull()
     expect(row.ev_per_box!).toBeGreaterThan(0)
     expect(row.set_chase_score).not.toBeNull()
     expect(row.rip_or_singles_verdict).not.toBeNull()
     expect(row.rip_or_singles_verdict).not.toContain('Awaiting')
-    expect(row.rip_or_singles_verdict).not.toContain('Sub-set')
   })
 
-  it('EV ratio is in a sane range for a typical BB — not crushed to 12% of its real value', () => {
-    // Regression test for the old `subSetDampen = cards.length < 50 ? 0.12 : 1`
-    // bug. Before the fix, a set with 25 priced cards would have its EV
-    // multiplied by 0.12 even though it's a normal BB, just early in its life.
-    // Now: 25 priced cards is below MIN_PRICED_CARDS_FOR_EV (20), so we use
-    // exactly 25, which is above the threshold. EV should be undampened.
-    seedSet(db, 'sv7', { name: 'Stellar Crown', release_date: '2024-09-13', total_cards: 175 })
-    // Give it 25 cards with chase-like prices to make the bug visible if it
-    // regressed (0.12x dampening would drop EV below sealed price).
-    const fewCards: SeedCard[] = []
-    for (let i = 0; i < 25; i++) {
-      fewCards.push({
-        id: `sv7-chase-${i}`,
-        rarity: i < 18 ? 'Rare Holo' : i < 22 ? 'Ultra Rare' : 'Special Illustration Rare',
-        market_price: i < 18 ? 3 : i < 22 ? 25 : 150,
-        desirability: 8,
-        pullCost: 7,
-      })
-    }
-    seedCards(db, 'sv7', fewCards)
+  it('consensus uses the median of multiple snapshots, not a single stale one', () => {
+    // If a buggy "seed" function ever comes back and inserts a far-off
+    // price (e.g. $99), two real scraper rows should outvote it.
+    seedSet(db, 'sv7', { name: 'Stellar Crown', total_cards: 175 })
+    seedSealedSnapshot(db, 'sv7', 'bb', 99, 36, 'phantom-seed')
+    seedSealedSnapshot(db, 'sv7', 'bb', 288, 36, 'tcgplayer')
+    seedSealedSnapshot(db, 'sv7', 'bb', 290, 36, 'pricecharting')
+    seedCards(db, 'sv7', makeRealisticCards('sv7', 175))
 
     refreshSetMetrics(db)
 
-    const row = db.prepare('SELECT box_price, ev_per_box FROM sets WHERE id = ?').get('sv7') as {
-      box_price: number | null
-      ev_per_box: number | null
-    }
-
-    // With the old 0.12 dampener, EV on this card set would be ~$60-80, far
-    // below the ~$300 static box price → bogus "Buy singles" verdict. Without
-    // the dampener, EV should land in a realistic three-digit range.
-    expect(row.ev_per_box).not.toBeNull()
-    expect(row.ev_per_box!).toBeGreaterThan(100)
+    const row = db.prepare('SELECT box_price FROM sets WHERE id = ?').get('sv7') as { box_price: number }
+    // Median of [99, 288, 290] sorted ascending is 288. With outlier
+    // filtering (> 2× or < 0.5× median) the $99 is dropped and we end
+    // up at 289 (median of 288, 290 ≈ 289).
+    expect(row.box_price).toBeGreaterThanOrEqual(288)
+    expect(row.box_price).toBeLessThanOrEqual(290)
   })
 
-  it('sub-sets are marked with product_type = sub and zeroed metrics', () => {
-    // swsh12tg is a trainer gallery sub-set in the lookup.
+  it('sub-set catalog entries are short-circuited with zeroed metrics', () => {
     seedSet(db, 'swsh12tg', { name: 'Silver Tempest Trainer Gallery', total_cards: 30 })
     seedCards(db, 'swsh12tg', makeRealisticCards('swsh12tg', 30))
 
@@ -242,29 +265,54 @@ describe('refreshSetMetrics', () => {
     expect(row.rip_or_singles_verdict).toContain('Sub-set')
   })
 
-  it('Mega Evolution era sets (me1..me3) are catalogued with correct product types', () => {
-    // Seed all four ME-era sets with enough cards to compute EV.
-    const meSets: Array<[string, 'bb' | 'etb']> = [
-      ['me1', 'bb'],
-      ['me2', 'bb'],
-      ['me2pt5', 'etb'],
-      ['me3', 'bb'],
+  it('regression guard: EV is not crushed by the old sub-set dampener', () => {
+    // Before the fix, 25 priced cards triggered the sub-set dampener and
+    // multiplied EV by 0.12. With 25 chase-heavy cards we should land in
+    // a three-digit EV, not single-digit.
+    seedSet(db, 'sv7', { name: 'Stellar Crown', total_cards: 175 })
+    seedSealedSnapshot(db, 'sv7', 'bb', 288, 36)
+    const fewCards: SeedCard[] = []
+    for (let i = 0; i < 25; i++) {
+      fewCards.push({
+        id: `sv7-chase-${i}`,
+        rarity: i < 18 ? 'Rare Holo' : i < 22 ? 'Ultra Rare' : 'Special Illustration Rare',
+        market_price: i < 18 ? 3 : i < 22 ? 25 : 150,
+        desirability: 8,
+        pullCost: 7,
+      })
+    }
+    seedCards(db, 'sv7', fewCards)
+
+    refreshSetMetrics(db)
+
+    const row = db.prepare('SELECT ev_per_box FROM sets WHERE id = ?').get('sv7') as {
+      ev_per_box: number | null
+    }
+    expect(row.ev_per_box).not.toBeNull()
+    expect(row.ev_per_box!).toBeGreaterThan(100)
+  })
+
+  it('all four ME-era sets are catalogued and compute correctly once snapshots exist', () => {
+    const meSets: Array<[string, 'bb' | 'etb', number]> = [
+      ['me1', 'bb', 250],
+      ['me2', 'bb', 347],
+      ['me2pt5', 'etb', 145],
+      ['me3', 'bb', 204],
     ]
-    for (const [id] of meSets) {
+    for (const [id, type, price] of meSets) {
       seedSet(db, id, { name: id, total_cards: 150 })
+      seedSealedSnapshot(db, id, type, price, type === 'bb' ? 36 : 9)
       seedCards(db, id, makeRealisticCards(id, 150))
     }
 
     refreshSetMetrics(db)
 
-    for (const [id, expectedType] of meSets) {
-      const row = db.prepare('SELECT product_type, box_price, ev_per_box FROM sets WHERE id = ?').get(id) as {
-        product_type: string | null
-        box_price: number | null
-        ev_per_box: number | null
-      }
+    for (const [id, expectedType, expectedPrice] of meSets) {
+      const row = db
+        .prepare('SELECT product_type, box_price, ev_per_box FROM sets WHERE id = ?')
+        .get(id) as { product_type: string | null; box_price: number | null; ev_per_box: number | null }
       expect(row.product_type, `product_type for ${id}`).toBe(expectedType)
-      expect(row.box_price, `box_price for ${id}`).toBeGreaterThan(0)
+      expect(row.box_price, `box_price for ${id}`).toBe(expectedPrice)
       expect(row.ev_per_box, `ev_per_box for ${id}`).toBeGreaterThan(0)
     }
   })

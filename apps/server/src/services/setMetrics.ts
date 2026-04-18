@@ -77,113 +77,29 @@ function rarityToTier(rarity: string): PullTier {
  */
 type ProductType = 'bb' | 'etb' | 'sub'
 
-type SetProduct = {
-  type: ProductType
-  packs: number
-  price: number
-  verified: boolean
-  parent?: string
-}
-
-/**
- * TCGPlayer sealed product market prices — verified April 2026
- * via pokemonwizard.com / pricecharting.com / pittpokeresearch.com.
- *
- * verified = true  → real TCGPlayer market listing
- * verified = false → price estimated or no listing found
- */
-/**
- * Static price/product table used as a fallback when no sealed_products
- * snapshot consensus is available. A set being absent from this table
- * means we don't know what sealed SKU to price — `getProduct` returns
- * null in that case and `refreshSetMetrics` leaves the set's metric
- * columns untouched. The Sets UI filters out rows without product_type,
- * so uncatalogued sets (brand-new releases, promo-only sets, etc.) stay
- * out of the opportunity map until an operator adds an entry here.
- */
-const PRODUCT_LOOKUP: Record<string, SetProduct> = {
-  // ── Scarlet & Violet — Booster Box sets ────────────────────
-  sv10:     { type: 'bb',  packs: 36, price: 521,  verified: true  }, // Destined Rivals
-  sv9:      { type: 'bb',  packs: 36, price: 287,  verified: true  }, // Journey Together
-  sv8:      { type: 'bb',  packs: 36, price: 255,  verified: true  }, // Surging Sparks
-  sv7:      { type: 'bb',  packs: 36, price: 288,  verified: true  }, // Stellar Crown
-  sv6:      { type: 'bb',  packs: 36, price: 321,  verified: true  }, // Twilight Masquerade
-  sv5:      { type: 'bb',  packs: 36, price: 254,  verified: true  }, // Temporal Forces
-  sv4:      { type: 'bb',  packs: 36, price: 247,  verified: true  }, // Paradox Rift
-  sv3:      { type: 'bb',  packs: 36, price: 345,  verified: true  }, // Obsidian Flames
-  sv2:      { type: 'bb',  packs: 36, price: 420,  verified: true  }, // Paldea Evolved
-  sv1:      { type: 'bb',  packs: 36, price: 269,  verified: true  }, // Scarlet & Violet base
-
-  // ── Scarlet & Violet — ETB-only sets (no booster box) ──────
-  sv8pt5:   { type: 'etb', packs: 9,  price: 176,  verified: true  }, // Prismatic Evolutions
-  sv6pt5:   { type: 'etb', packs: 9,  price: 88,   verified: true  }, // Shrouded Fable
-  sv4pt5:   { type: 'etb', packs: 9,  price: 320,  verified: true  }, // Paldean Fates
-  sv3pt5:   { type: 'etb', packs: 9,  price: 522,  verified: true  }, // 151
-
-  // ── Sword & Shield — Booster Box sets ──────────────────────
-  swsh12:   { type: 'bb',  packs: 36, price: 471,  verified: true  }, // Silver Tempest
-  swsh11:   { type: 'bb',  packs: 36, price: 734,  verified: true  }, // Lost Origin
-  swsh10:   { type: 'bb',  packs: 36, price: 391,  verified: true  }, // Astral Radiance
-  swsh9:    { type: 'bb',  packs: 36, price: 576,  verified: true  }, // Brilliant Stars
-  swsh8:    { type: 'bb',  packs: 36, price: 990,  verified: true  }, // Fusion Strike
-  swsh7:    { type: 'bb',  packs: 36, price: 2500, verified: true  }, // Evolving Skies
-  swsh6:    { type: 'bb',  packs: 36, price: 493,  verified: true  }, // Chilling Reign
-  swsh5:    { type: 'bb',  packs: 36, price: 184,  verified: true  }, // Battle Styles
-  swsh4:    { type: 'bb',  packs: 36, price: 201,  verified: true  }, // Vivid Voltage
-  swsh3:    { type: 'bb',  packs: 36, price: 211,  verified: true  }, // Darkness Ablaze
-  swsh2:    { type: 'bb',  packs: 36, price: 274,  verified: true  }, // Rebel Clash
-  swsh1:    { type: 'bb',  packs: 36, price: 230,  verified: false }, // Sword & Shield base
-
-  // ── Sword & Shield — ETB / Special Product sets (no BB) ────
-  swsh12pt5: { type: 'etb', packs: 10, price: 290, verified: true  }, // Crown Zenith
-  pgo:       { type: 'etb', packs: 10, price: 100, verified: false }, // Pokemon GO
-  cel25:     { type: 'etb', packs: 10, price: 150, verified: false }, // Celebrations
-  swsh45:    { type: 'etb', packs: 10, price: 120, verified: false }, // Shining Fates
-  swsh35:    { type: 'etb', packs: 10, price: 120, verified: false }, // Champion's Path
-
-  // ── Sub-sets (cards come from parent set's packs) ──────────
-  swsh12pt5gg: { type: 'sub', packs: 0, price: 0, verified: false, parent: 'swsh12pt5' },
-  swsh12tg:    { type: 'sub', packs: 0, price: 0, verified: false, parent: 'swsh12' },
-  swsh11tg:    { type: 'sub', packs: 0, price: 0, verified: false, parent: 'swsh11' },
-  swsh10tg:    { type: 'sub', packs: 0, price: 0, verified: false, parent: 'swsh10' },
-  swsh9tg:     { type: 'sub', packs: 0, price: 0, verified: false, parent: 'swsh9' },
-  cel25c:      { type: 'sub', packs: 0, price: 0, verified: false, parent: 'cel25' },
-  swsh45sv:    { type: 'sub', packs: 0, price: 0, verified: false, parent: 'swsh45' },
-
-  // ── SV Special Split Expansion (ETB-only in English) ───────
-  zsv10pt5: { type: 'etb', packs: 9,  price: 96,   verified: false }, // Black Bolt
-  rsv10pt5: { type: 'etb', packs: 9,  price: 98,   verified: false }, // White Flare
-
-  // ── Mega Evolution era (2025-2026) ─────────────────────────
-  me1:    { type: 'bb',  packs: 36, price: 250.74, verified: true }, // Mega Evolution
-  me2:    { type: 'bb',  packs: 36, price: 346.92, verified: true }, // Phantasmal Flames
-  me2pt5: { type: 'etb', packs: 9,  price: 144.76, verified: true }, // Ascended Heroes (ETB only)
-  me3:    { type: 'bb',  packs: 36, price: 203.88, verified: true }, // Perfect Order
-}
-
-/**
- * Return the known product entry for a set, or null if we don't have one.
- * Returning null (rather than a fabricated $144 fallback) keeps unknown
- * sets out of the Sets UI instead of polluting it with phantom prices.
- */
-function getProduct(setId: string): SetProduct | null {
-  return PRODUCT_LOOKUP[setId] ?? null
-}
+// NOTE: no hardcoded price table lives in this file. Set-level sealed prices
+// come exclusively from `sealed_products` (populated by refreshSealedPrices
+// via TCGPlayer / PriceCharting / eBay) and are aggregated through
+// `computeConsensus`. If a catalogued set has no fresh consensus, we render
+// a "Awaiting sealed price" state rather than inventing one. Product type
+// and pack count are derived from PRODUCT_CATALOG, which is external
+// identifier metadata (not prices) and only changes when new sets release.
 
 /**
  * Recompute per-set metrics (sealed price, EV / box, chase score, verdict).
  *
  * Invariants this function enforces:
- *   1. A set is written to only when we have a known product (catalog entry
- *      or static lookup). Unknown sets are left alone so the UI can filter
- *      them out by `product_type IS NULL`.
+ *   1. A set is written to only when it's in PRODUCT_CATALOG. Uncatalogued
+ *      sets (promo-only, energy reprints, brand-new releases we haven't
+ *      mapped yet) are cleared to NULL so the UI can filter them out.
  *   2. Once a catalogued set is touched, `product_type` and `product_packs`
- *      are always written, even if there aren't enough priced cards yet to
- *      compute EV. This lets the UI render a "Awaiting card prices" state.
+ *      are always written, even if there's no fresh price consensus or
+ *      enough priced cards yet to compute EV. The UI renders "Awaiting
+ *      sealed price" / "Awaiting card prices" for those pending states.
  *   3. Sub-sets (trainer galleries, shiny vaults, etc.) are short-circuited
  *      with zeroed metrics and a sub-set verdict.
- *   4. If a previously catalogued set ends up with stale fallback values
- *      (e.g. the old $144 phantom price), this pass clears them.
+ *   4. If a previously catalogued set ends up uncatalogued and was
+ *      carrying stale metrics from an earlier run, this pass clears them.
  */
 export function refreshSetMetrics(db: Database.Database) {
   const sets = db.prepare(`SELECT id, box_price, release_date, total_cards FROM sets`).all() as {
@@ -195,12 +111,12 @@ export function refreshSetMetrics(db: Database.Database) {
 
   for (const s of sets) {
     const catalogEntry = getCatalogEntry(s.id)
-    const staticProduct = getProduct(s.id)
 
-    if (!catalogEntry && !staticProduct) {
-      // Unknown set — we don't have a sealed product to price. Clear any
-      // previously written phantom fallback values so the UI stops showing
-      // this set with a fake $144 price and a bogus EV ratio.
+    if (!catalogEntry) {
+      // Uncatalogued set — no sealed product mapping, no way to price it.
+      // Clear any previously written values so the UI stops showing stale
+      // numbers. Unconditional clear is safe: everything below is derived
+      // state and can be recomputed once the set is catalogued.
       db.prepare(
         `UPDATE sets
          SET box_price = NULL, box_price_verified = 0,
@@ -208,13 +124,13 @@ export function refreshSetMetrics(db: Database.Database) {
              price_sources = 0, price_confidence = 'low',
              ev_per_box = NULL, set_chase_score = NULL,
              rip_or_singles_verdict = NULL
-         WHERE id = ? AND (product_type IS NULL OR box_price_verified = 0)`,
+         WHERE id = ?`,
       ).run(s.id)
       continue
     }
 
-    const productType = catalogEntry?.type ?? staticProduct!.type
-    const packs = catalogEntry?.packs ?? staticProduct!.packs
+    const productType = catalogEntry.type
+    const packs = catalogEntry.packs
 
     if (productType === 'sub') {
       db.prepare(
@@ -227,12 +143,24 @@ export function refreshSetMetrics(db: Database.Database) {
     }
 
     const consensus: ConsensusResult | null = computeConsensus(db, s.id, productType)
-    const price = consensus?.price ?? staticProduct?.price ?? null
-    const verified = consensus
-      ? consensus.confidence !== 'low'
-      : (staticProduct?.verified ?? false)
-    const sources = consensus?.sources ?? (staticProduct?.verified ? 1 : 0)
+    const price = consensus?.price ?? null
+    const verified = consensus ? consensus.confidence !== 'low' : false
+    const sources = consensus?.sources ?? 0
     const confidence = consensus?.confidence ?? 'low'
+
+    // No fresh sealed-price consensus yet — surface product_type / packs
+    // so the UI still lists the set, but render a pending state. The next
+    // sealed-refresh cron pass will fill it in.
+    if (price == null) {
+      db.prepare(
+        `UPDATE sets SET box_price = NULL, box_price_verified = 0,
+         product_type = ?, product_packs = ?,
+         price_sources = 0, price_confidence = 'low',
+         ev_per_box = NULL, set_chase_score = NULL,
+         rip_or_singles_verdict = ? WHERE id = ?`,
+      ).run(productType, packs, '\u{23F3} Awaiting sealed price', s.id)
+      continue
+    }
 
     const cards = db
       .prepare(
@@ -310,7 +238,7 @@ export function refreshSetMetrics(db: Database.Database) {
       ? Math.max(0, (Date.now() - rel.getTime()) / (365.25 * 86_400_000))
       : 0
 
-    const evRatio = price && price > 0 ? ev / price : 0
+    const evRatio = price > 0 ? ev / price : 0
 
     const highValueEv = cards
       .filter(c => c.market_price >= 20)
@@ -325,9 +253,7 @@ export function refreshSetMetrics(db: Database.Database) {
     const concentrationPct = ev > 0 ? highValueEv / ev : 0
 
     let verdict: string
-    if (!price || price <= 0) {
-      verdict = '\u{23F3} Awaiting sealed price'
-    } else if (ageYears >= 3 && evRatio < 1.2) {
+    if (ageYears >= 3 && evRatio < 1.2) {
       verdict = '\u{1F7E3} Hold sealed (appreciating collectible)'
     } else if (evRatio >= 1.1 && concentrationPct < 0.7) {
       verdict = '\u{1F534} Rip packs (EV-positive)'

@@ -350,134 +350,18 @@ export async function refreshSealedPrices(db: Database.Database) {
   return { fetched, failed }
 }
 
-/* ── Seed with researched multi-source data ─────────────────── */
-
-export function seedSealedPrices(db: Database.Database) {
-  const existing = (db.prepare(`SELECT COUNT(*) as c FROM sealed_products`).get() as { c: number }).c
-  if (existing > 0) return
-
-  const ins = db.prepare(
-    `INSERT INTO sealed_products (set_id, product_type, source, price, packs, fetched_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-  )
-  const now = new Date().toISOString()
-  const s = (setId: string, type: ProductType, source: string, price: number, packs: number) =>
-    ins.run(setId, type, source, price, packs, now)
-
-  // ── sv10 Destined Rivals BB
-  s('sv10', 'bb', 'pokemonwizard', 521.25, 36)
-  s('sv10', 'bb', 'pittpokeresearch', 539.91, 36)
-
-  // ── sv9 Journey Together BB
-  s('sv9', 'bb', 'pokemonwizard_a', 252.06, 36)
-  s('sv9', 'bb', 'pokemonwizard_b', 222.36, 36)
-  s('sv9', 'bb', 'pittpokeresearch', 252.38, 36)
-  s('sv9', 'bb', 'user_report', 287, 36)
-
-  // ── sv8pt5 Prismatic Evolutions ETB
-  s('sv8pt5', 'etb', 'pokemonwizard', 176.03, 9)
-
-  // ── sv8 Surging Sparks BB
-  s('sv8', 'bb', 'pokemonwizard', 255.08, 36)
-  s('sv8', 'bb', 'pittpokeresearch', 259.53, 36)
-
-  // ── sv7 Stellar Crown BB
-  s('sv7', 'bb', 'pokemonwizard', 288.48, 36)
-
-  // ── sv6pt5 Shrouded Fable ETB
-  s('sv6pt5', 'etb', 'pokemonwizard', 74.31, 9)
-  s('sv6pt5', 'etb', 'pricecharting', 87.94, 9)
-  s('sv6pt5', 'etb', 'user_report', 90, 9)
-
-  // ── sv6 Twilight Masquerade BB
-  s('sv6', 'bb', 'pokemonwizard', 320.58, 36)
-
-  // ── sv5 Temporal Forces BB
-  s('sv5', 'bb', 'pokemonwizard', 253.79, 36)
-
-  // ── sv4pt5 Paldean Fates ETB
-  s('sv4pt5', 'etb', 'pokemonwizard', 319.93, 9)
-
-  // ── sv4 Paradox Rift BB
-  s('sv4', 'bb', 'pokemonwizard', 246.85, 36)
-
-  // ── sv3pt5 151 ETB
-  s('sv3pt5', 'etb', 'pokemonwizard_a', 488.26, 9)
-  s('sv3pt5', 'etb', 'pokemonwizard_b', 521.94, 9)
-
-  // ── sv3 Obsidian Flames BB
-  s('sv3', 'bb', 'pokemonwizard', 345.22, 36)
-
-  // ── sv2 Paldea Evolved BB
-  s('sv2', 'bb', 'pokemonwizard', 419.75, 36)
-
-  // ── sv1 Scarlet & Violet BB
-  s('sv1', 'bb', 'pokemonwizard', 269.22, 36)
-  s('sv1', 'bb', 'pricecharting', 267.21, 36)
-
-  // ── swsh12pt5 Crown Zenith ETB
-  s('swsh12pt5', 'etb', 'pokemonwizard', 289.90, 10)
-
-  // ── swsh12 Silver Tempest BB
-  s('swsh12', 'bb', 'pokemonwizard', 471.01, 36)
-
-  // ── swsh11 Lost Origin BB
-  s('swsh11', 'bb', 'pokemonwizard', 733.67, 36)
-
-  // ── swsh10 Astral Radiance BB
-  s('swsh10', 'bb', 'pokemonwizard', 390.83, 36)
-
-  // ── swsh9 Brilliant Stars BB
-  s('swsh9', 'bb', 'pokemonwizard', 575.91, 36)
-
-  // ── swsh8 Fusion Strike BB
-  s('swsh8', 'bb', 'pokemonwizard', 990.28, 36)
-
-  // ── swsh7 Evolving Skies BB
-  s('swsh7', 'bb', 'pokemonwizard', 2567.47, 36)
-  s('swsh7', 'bb', 'pricecharting', 2545, 36)
-
-  // ── swsh6 Chilling Reign BB
-  s('swsh6', 'bb', 'pokemonwizard', 492.65, 36)
-
-  // ── swsh5 Battle Styles BB
-  s('swsh5', 'bb', 'pokemonwizard', 184.13, 36)
-
-  // ── swsh4 Vivid Voltage BB
-  s('swsh4', 'bb', 'pokemonwizard', 200.92, 36)
-
-  // ── swsh3 Darkness Ablaze BB
-  s('swsh3', 'bb', 'pokemonwizard', 211.24, 36)
-
-  // ── swsh2 Rebel Clash BB
-  s('swsh2', 'bb', 'pokemonwizard', 274.09, 36)
-
-  // ── swsh1 Sword & Shield BB
-  s('swsh1', 'bb', 'pricecharting', 230, 36)
-
-  // ── pgo Pokemon GO ETB
-  s('pgo', 'etb', 'estimate', 100, 10)
-
-  // ── cel25 Celebrations ETB
-  s('cel25', 'etb', 'estimate', 150, 10)
-
-  // ── swsh45 Shining Fates ETB
-  s('swsh45', 'etb', 'estimate', 120, 10)
-
-  // ── swsh35 Champion's Path ETB
-  s('swsh35', 'etb', 'estimate', 120, 10)
-
-  // ── Black Bolt ETB
-  s('zsv10pt5', 'etb', 'estimate', 96, 9)
-
-  // ── White Flare ETB
-  s('rsv10pt5', 'etb', 'estimate', 98, 9)
-
-  // ── Mega Evolution era (seeded from PriceCharting April 2026) ─────
-  // Seeded to bootstrap consensus; the 12h sealed-refresh cron will add
-  // fresher snapshots and the consensus median will move with the market.
-  s('me1',    'bb',  'pricecharting', 250.74, 36)
-  s('me2',    'bb',  'pricecharting', 346.92, 36)
-  s('me2pt5', 'etb', 'pricecharting', 144.76, 9)
-  s('me3',    'bb',  'pricecharting', 203.88, 36)
-}
+// Intentionally no `seedSealedPrices` function here.
+//
+// Previously this file exported a seed function that inserted ~40 hardcoded
+// sealed-box prices into `sealed_products` under fake source IDs like
+// "pokemonwizard", "pittpokeresearch", "user_report", "estimate". Those rows
+// then fed into `computeConsensus` and would silently outvote real scraped
+// prices inside the 30-day consensus window. That's how a set could show a
+// stale April-2026 price six months later even after successful scrapes.
+//
+// The correct source of truth is the `sealed_products` table, populated by
+// `refreshSealedPrices` from live sources: TCGPlayer Marketplace API,
+// PriceCharting page scrape, and eBay Browse API. On a cold DB, the 12-hour
+// sealed-refresh cron populates the table within minutes; until it does,
+// the Sets UI correctly renders "Awaiting sealed price" for catalogued
+// sets and hides uncatalogued ones. No hardcoded prices anywhere.
